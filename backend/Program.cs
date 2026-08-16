@@ -106,6 +106,43 @@ try
         }
     });
 
+    app.MapGet("/api/browse", (string path, ScannerService scanner) =>
+    {
+        var result = scanner.Browse(path);
+        if (result == null)
+            return Results.NotFound("No scan data available for this path. Run a scan first.");
+        return Results.Json(result, jsonOptions);
+    });
+
+    app.MapGet("/api/cache", (ScannerService scanner) =>
+    {
+        return Results.Json(scanner.ListCachedScans(), jsonOptions);
+    });
+
+    app.MapGet("/api/cache/{id}", (string id, ScannerService scanner) =>
+    {
+        var cached = scanner.LoadCachedScan(id);
+        if (cached == null)
+            return Results.NotFound("Cached scan not found.");
+        return Results.Json(cached, jsonOptions);
+    });
+
+    app.MapPost("/api/cache/{id}/load", (string id, ScannerService scanner) =>
+    {
+        if (scanner.IsScanning)
+            return Results.Conflict("Cannot load cache while a scan is in progress.");
+        if (!scanner.LoadCacheForBrowsing(id))
+            return Results.NotFound("Cached scan not found.");
+        return Results.Ok(new { loaded = true });
+    });
+
+    app.MapDelete("/api/cache/{id}", (string id, ScannerService scanner) =>
+    {
+        if (!scanner.DeleteCachedScan(id))
+            return Results.NotFound("Cached scan not found.");
+        return Results.Ok(new { deleted = true });
+    });
+
     app.Lifetime.ApplicationStarted.Register(() =>
     {
         var url = app.Urls.FirstOrDefault() ?? "http://localhost:5000";

@@ -46,3 +46,29 @@ export interface LogEntry {
   level: 'info' | 'warning' | 'error';
   message: string;
 }
+
+export interface DirEntry {
+  name: string;
+  path: string;
+  size: number;
+  fileCount: number;
+  subDirCount: number;
+}
+
+export interface BrowseResult {
+  path: string;
+  totalSize: number;
+  totalFiles: number;
+  directories: DirEntry[];
+  files: FileEntry[];
+}
+
+export interface CachedScan {
+  id: string;
+  rootPath: string;
+  scannedAt: string;
+  totalFiles: number;
+  totalDirs: number;
+  totalSize: number;
+  elapsedSeconds: number;
+}

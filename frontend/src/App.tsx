@@ -1,6 +1,46 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import type { DriveInfo, ScanProgress, ScanResult, LogEntry } from './types';
-import { fetchDrives, startScan } from './api';
+import type { DriveInfo, ScanProgress, ScanResult, LogEntry, BrowseResult, CachedScan } from './types';
+import { fetchDrives, startScan, browse, fetchCachedScans, loadCachedScan, deleteCachedScan } from './api';
+
+type Theme = 'light' | 'dark' | 'system';
+
+function useTheme(): [Theme, (t: Theme) => void] {
+  const [theme, setThemeState] = useState<Theme>(() => {
+    const stored = localStorage.getItem('theme');
+    if (stored === 'light' || stored === 'dark') return stored;
+    return 'system';
+  });
+
+  useEffect(() => {
+    const root = document.documentElement;
+    if (theme === 'system') {
+      root.removeAttribute('data-theme');
+      localStorage.removeItem('theme');
+    } else {
+      root.setAttribute('data-theme', theme);
+      localStorage.setItem('theme', theme);
+    }
+  }, [theme]);
+
+  return [theme, setThemeState];
+}
+
+function ThemeToggle({ theme, setTheme }: { theme: Theme; setTheme: (t: Theme) => void }) {
+  const cycle = () => {
+    if (theme === 'system') setTheme('light');
+    else if (theme === 'light') setTheme('dark');
+    else setTheme('system');
+  };
+
+  const icon = theme === 'light' ? '☀️' : theme === 'dark' ? '🌙' : '💻';
+  const label = theme === 'light' ? 'Light' : theme === 'dark' ? 'Dark' : 'System';
+
+  return (
+    <button className="theme-toggle" onClick={cycle} title={`Theme: ${label}`}>
+      {icon}
+    </button>
+  );
+}
 
 function formatSize(bytes: number): string {
   if (bytes === 0) return '0 B';
@@ -136,18 +176,256 @@ function LogPanel({ logs, expanded, onToggle }: { logs: LogEntry[]; expanded: bo
   );
 }
 
+function DirectoryBrowser({ rootPath }: { rootPath: string }) {
+  const [browseData, setBrowseData] = useState<BrowseResult | null>(null);
+  const [currentPath, setCurrentPath] = useState(rootPath);
+  const [loading, setLoading] = useState(false);
+  const [browseError, setBrowseError] = useState<string | null>(null);
+
+  const loadDir = useCallback(async (path: string) => {
+    setLoading(true);
+    setBrowseError(null);
+    try {
+      const data = await browse(path);
+      setBrowseData(data);
+      setCurrentPath(path);
+    } catch {
+      setBrowseError('Failed to load directory data.');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadDir(rootPath);
+  }, [rootPath, loadDir]);
+
+  const breadcrumbs = (() => {
+    const parts: { label: string; path: string }[] = [];
+    let p = currentPath;
+    while (p) {
+      const name = p.length <= 3 ? p : p.split('\\').pop() || p;
+      parts.unshift({ label: name, path: p });
+      const parent = p.substring(0, p.lastIndexOf('\\'));
+      if (parent === p || parent.length < rootPath.replace(/\\$/, '').length) break;
+      p = parent;
+    }
+    if (parts.length === 0 || parts[0].path !== rootPath) {
+      const rootLabel = rootPath.length <= 3 ? rootPath : rootPath.split('\\').pop() || rootPath;
+      parts.unshift({ label: rootLabel, path: rootPath });
+    }
+    return parts;
+  })();
+
+  if (loading && !browseData) {
+    return (
+      <div className="loading-drives">
+        <div className="spinner" />
+        <p>Loading directory data...</p>
+      </div>
+    );
+  }
+
+  if (browseError) {
+    return <div className="error-banner">{browseError}</div>;
+  }
+
+  if (!browseData) return null;
+
+  const parentSize = browseData.totalSize || 1;
+
+  return (
+    <div className="browser-section">
+      <div className="breadcrumb-bar">
+        {breadcrumbs.map((crumb, i) => (
+          <span key={crumb.path}>
+            {i > 0 && <span className="breadcrumb-sep">&rsaquo;</span>}
+            <button
+              className={`breadcrumb-btn ${crumb.path === currentPath ? 'active' : ''}`}
+              onClick={() => loadDir(crumb.path)}
+              disabled={crumb.path === currentPath}
+            >
+              {crumb.label}
+            </button>
+          </span>
+        ))}
+      </div>
+
+      <div className="browser-summary">
+        <span>{formatSize(browseData.totalSize)} total</span>
+        <span className="browser-summary-sep">|</span>
+        <span>{browseData.directories.length} folders</span>
+        <span className="browser-summary-sep">|</span>
+        <span>{browseData.files.length} files</span>
+      </div>
+
+      {browseData.directories.length > 0 && (
+        <div className="browser-list">
+          {browseData.directories.map(dir => {
+            const pct = parentSize > 0 ? (dir.size / parentSize) * 100 : 0;
+            return (
+              <button key={dir.path} className="browser-row dir-row" onClick={() => loadDir(dir.path)}>
+                <span className="browser-icon">DIR</span>
+                <span className="browser-name" title={dir.path}>{dir.name}</span>
+                <span className="browser-bar-wrapper">
+                  <span className="browser-bar">
+                    <span
+                      className={`browser-bar-fill ${pct > 50 ? 'heavy' : ''}`}
+                      style={{ width: `${Math.max(pct, 0.5)}%` }}
+                    />
+                  </span>
+                  <span className="browser-pct">{pct.toFixed(1)}%</span>
+                </span>
+                <span className="browser-size">{formatSize(dir.size)}</span>
+                <span className="browser-meta">{dir.fileCount.toLocaleString()} files</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {browseData.files.length > 0 && (
+        <>
+          {browseData.directories.length > 0 && <div className="browser-divider">Files in this directory</div>}
+          <div className="browser-list">
+            {browseData.files.map(file => {
+              const pct = parentSize > 0 ? (file.size / parentSize) * 100 : 0;
+              return (
+                <div key={file.path} className="browser-row file-row">
+                  <span className="browser-icon file-icon">{file.extension?.replace('.', '').toUpperCase().slice(0, 4) || 'FILE'}</span>
+                  <span className="browser-name" title={file.path}>{file.path.split('\\').pop()}</span>
+                  <span className="browser-bar-wrapper">
+                    <span className="browser-bar">
+                      <span
+                        className="browser-bar-fill file-bar"
+                        style={{ width: `${Math.max(pct, 0.3)}%` }}
+                      />
+                    </span>
+                    <span className="browser-pct">{pct < 0.1 ? '<0.1' : pct.toFixed(1)}%</span>
+                  </span>
+                  <span className="browser-size">{formatSize(file.size)}</span>
+                  <span className="browser-meta">{formatDate(file.lastModified)}</span>
+                </div>
+              );
+            })}
+          </div>
+        </>
+      )}
+
+      {browseData.directories.length === 0 && browseData.files.length === 0 && (
+        <div className="no-suggestions"><p>This directory is empty.</p></div>
+      )}
+    </div>
+  );
+}
+
+function ScanHistory({ onLoadScan, onClose }: {
+  onLoadScan: (id: string, rootPath: string) => void;
+  onClose: () => void;
+}) {
+  const [scans, setScans] = useState<CachedScan[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadingId, setLoadingId] = useState<string | null>(null);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        setScans(await fetchCachedScans());
+      } catch { /* ignore */ }
+      setLoading(false);
+    })();
+  }, []);
+
+  const handleDelete = async (id: string) => {
+    try {
+      await deleteCachedScan(id);
+      setScans(prev => prev.filter(s => s.id !== id));
+    } catch { /* ignore */ }
+  };
+
+  const handleLoad = async (scan: CachedScan) => {
+    setLoadingId(scan.id);
+    try {
+      await loadCachedScan(scan.id);
+      onLoadScan(scan.id, scan.rootPath);
+    } catch { /* ignore */ }
+    setLoadingId(null);
+  };
+
+  if (loading) {
+    return (
+      <div className="history-panel">
+        <div className="history-header">
+          <h3>Scan History</h3>
+          <button className="btn btn-cancel btn-sm" onClick={onClose}>Close</button>
+        </div>
+        <div className="loading-drives"><div className="spinner" /><p>Loading...</p></div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="history-panel">
+      <div className="history-header">
+        <h3>Scan History</h3>
+        <button className="btn btn-cancel btn-sm" onClick={onClose}>Close</button>
+      </div>
+      {scans.length === 0 ? (
+        <div className="no-suggestions"><p>No cached scans found. Run a scan first.</p></div>
+      ) : (
+        <div className="history-list">
+          {scans.map(scan => (
+            <div key={scan.id} className="history-item">
+              <div className="history-item-main">
+                <div className="history-item-path">{scan.rootPath}</div>
+                <div className="history-item-meta">
+                  <span>{formatDate(scan.scannedAt)}</span>
+                  <span className="browser-summary-sep">|</span>
+                  <span>{scan.totalFiles.toLocaleString()} files</span>
+                  <span className="browser-summary-sep">|</span>
+                  <span>{formatSize(scan.totalSize)}</span>
+                  <span className="browser-summary-sep">|</span>
+                  <span>{formatElapsed(scan.elapsedSeconds)}</span>
+                </div>
+              </div>
+              <div className="history-item-actions">
+                <button
+                  className="btn btn-primary btn-sm"
+                  onClick={() => handleLoad(scan)}
+                  disabled={loadingId !== null}
+                >
+                  {loadingId === scan.id ? 'Loading...' : 'Browse'}
+                </button>
+                <button
+                  className="btn btn-cancel btn-sm"
+                  onClick={() => handleDelete(scan.id)}
+                  disabled={loadingId !== null}
+                >
+                  Delete
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function App() {
+  const [theme, setTheme] = useTheme();
   const [drives, setDrives] = useState<DriveInfo[]>([]);
   const [selectedDrive, setSelectedDrive] = useState<string | null>(null);
   const [scanning, setScanning] = useState(false);
   const [progress, setProgress] = useState<ScanProgress | null>(null);
   const [result, setResult] = useState<ScanResult | null>(null);
-  const [activeTab, setActiveTab] = useState<'largest' | 'suggestions' | 'logs'>('largest');
+  const [activeTab, setActiveTab] = useState<'largest' | 'browse' | 'suggestions' | 'logs'>('largest');
   const [error, setError] = useState<string | null>(null);
   const [customPath, setCustomPath] = useState('');
   const [loadingDrives, setLoadingDrives] = useState(true);
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [logsExpanded, setLogsExpanded] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
   const cleanupRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
@@ -176,6 +454,7 @@ export default function App() {
     setActiveTab('largest');
     setLogs([]);
     setLogsExpanded(false);
+    setShowHistory(false);
 
     const cleanup = startScan(
       path,
@@ -210,6 +489,7 @@ export default function App() {
     setError(null);
     setCustomPath('');
     setLogs([]);
+    setShowHistory(false);
     loadDrives();
   }, []);
 
@@ -220,11 +500,20 @@ export default function App() {
     }
   }, [customPath, handleStartScan]);
 
+  const handleLoadCachedScan = useCallback((_id: string, rootPath: string) => {
+    setSelectedDrive(rootPath);
+    setResult({ totalFiles: 0, totalDirs: 0, totalSize: 0, elapsedSeconds: 0, scanSpeedGBPerSec: null, largestFiles: [], suggestions: [] });
+    setActiveTab('browse');
+    setShowHistory(false);
+    setLogs([]);
+  }, []);
+
   // Screen 1: Drive Selection
   if (!scanning && !result) {
     return (
       <div className="app">
         <header className="header">
+          <ThemeToggle theme={theme} setTheme={setTheme} />
           <h1>Folder & File Size Scanner</h1>
           <p className="subtitle">Select a drive to scan or enter a custom path</p>
         </header>
@@ -242,7 +531,17 @@ export default function App() {
           <button className="btn btn-primary" onClick={handleCustomScan} disabled={!customPath.trim()}>
             Scan Folder
           </button>
+          <button className="btn btn-cancel" onClick={() => setShowHistory(!showHistory)}>
+            History
+          </button>
         </div>
+
+        {showHistory && (
+          <ScanHistory
+            onLoadScan={handleLoadCachedScan}
+            onClose={() => setShowHistory(false)}
+          />
+        )}
 
         {loadingDrives ? (
           <div className="loading-drives">
@@ -292,6 +591,7 @@ export default function App() {
     return (
       <div className="app">
         <header className="header">
+          <ThemeToggle theme={theme} setTheme={setTheme} />
           <h1>Scanning {selectedDrive}</h1>
           <p className="subtitle">Analyzing folder and file sizes...</p>
         </header>
@@ -356,65 +656,81 @@ export default function App() {
 
   // Screen 3: Results
   if (result) {
+    const showSummary = result.totalFiles > 0;
     return (
       <div className="app">
         <header className="header">
+          <ThemeToggle theme={theme} setTheme={setTheme} />
           <h1>Scan Results</h1>
           <p className="subtitle">Scan of {selectedDrive} completed</p>
         </header>
 
         {error && <div className="error-banner">{error}</div>}
 
-        <div className="stats-grid five-col summary-bar">
-          <div className="stat-card">
-            <div className="stat-value">{result.totalFiles.toLocaleString()}</div>
-            <div className="stat-label">Total Files</div>
-          </div>
-          <div className="stat-card">
-            <div className="stat-value">{result.totalDirs.toLocaleString()}</div>
-            <div className="stat-label">Total Directories</div>
-          </div>
-          <div className="stat-card">
-            <div className="stat-value">{formatSize(result.totalSize)}</div>
-            <div className="stat-label">Total Size</div>
-          </div>
-          <div className="stat-card">
-            <div className="stat-value">{formatElapsed(result.elapsedSeconds)}</div>
-            <div className="stat-label">Scan Duration</div>
-          </div>
-          <div className="stat-card">
-            <div className="stat-value">
-              {result.scanSpeedGBPerSec != null ? `${result.scanSpeedGBPerSec.toFixed(2)} GB/s` : '--'}
+        {showSummary && (
+          <div className="stats-grid five-col summary-bar">
+            <div className="stat-card">
+              <div className="stat-value">{result.totalFiles.toLocaleString()}</div>
+              <div className="stat-label">Total Files</div>
             </div>
-            <div className="stat-label">Avg Scan Speed</div>
+            <div className="stat-card">
+              <div className="stat-value">{result.totalDirs.toLocaleString()}</div>
+              <div className="stat-label">Total Directories</div>
+            </div>
+            <div className="stat-card">
+              <div className="stat-value">{formatSize(result.totalSize)}</div>
+              <div className="stat-label">Total Size</div>
+            </div>
+            <div className="stat-card">
+              <div className="stat-value">{formatElapsed(result.elapsedSeconds)}</div>
+              <div className="stat-label">Scan Duration</div>
+            </div>
+            <div className="stat-card">
+              <div className="stat-value">
+                {result.scanSpeedGBPerSec != null ? `${result.scanSpeedGBPerSec.toFixed(2)} GB/s` : '--'}
+              </div>
+              <div className="stat-label">Avg Scan Speed</div>
+            </div>
           </div>
-        </div>
+        )}
 
         <div className="tabs">
+          {showSummary && (
+            <button
+              className={`tab ${activeTab === 'largest' ? 'active' : ''}`}
+              onClick={() => setActiveTab('largest')}
+            >
+              Largest Files
+              <span className="tab-count">{result.largestFiles.length}</span>
+            </button>
+          )}
           <button
-            className={`tab ${activeTab === 'largest' ? 'active' : ''}`}
-            onClick={() => setActiveTab('largest')}
+            className={`tab ${activeTab === 'browse' ? 'active' : ''}`}
+            onClick={() => setActiveTab('browse')}
           >
-            Largest Files
-            <span className="tab-count">{result.largestFiles.length}</span>
+            Browse Directories
           </button>
-          <button
-            className={`tab ${activeTab === 'suggestions' ? 'active' : ''}`}
-            onClick={() => setActiveTab('suggestions')}
-          >
-            Cleanup Suggestions
-            <span className="tab-count">{result.suggestions.length}</span>
-          </button>
-          <button
-            className={`tab ${activeTab === 'logs' ? 'active' : ''}`}
-            onClick={() => setActiveTab('logs')}
-          >
-            Scan Log
-            <span className="tab-count">{logs.length}</span>
-          </button>
+          {showSummary && (
+            <>
+              <button
+                className={`tab ${activeTab === 'suggestions' ? 'active' : ''}`}
+                onClick={() => setActiveTab('suggestions')}
+              >
+                Cleanup Suggestions
+                <span className="tab-count">{result.suggestions.length}</span>
+              </button>
+              <button
+                className={`tab ${activeTab === 'logs' ? 'active' : ''}`}
+                onClick={() => setActiveTab('logs')}
+              >
+                Scan Log
+                <span className="tab-count">{logs.length}</span>
+              </button>
+            </>
+          )}
         </div>
 
-        {activeTab === 'largest' && (
+        {activeTab === 'largest' && showSummary && (
           <div className="table-container">
             <table className="file-table">
               <thead>
@@ -441,7 +757,11 @@ export default function App() {
           </div>
         )}
 
-        {activeTab === 'suggestions' && (
+        {activeTab === 'browse' && selectedDrive && (
+          <DirectoryBrowser rootPath={selectedDrive} />
+        )}
+
+        {activeTab === 'suggestions' && showSummary && (
           <div className="suggestions-section">
             <p className="suggestions-disclaimer">
               These are suggestions only — this tool does not modify any files.
@@ -472,7 +792,7 @@ export default function App() {
           </div>
         )}
 
-        {activeTab === 'logs' && (
+        {activeTab === 'logs' && showSummary && (
           <div className="log-results-panel">
             <LogFilteredView logs={logs} full emptyText="No log entries were recorded." />
           </div>

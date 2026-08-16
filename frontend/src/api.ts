@@ -1,4 +1,4 @@
-import type { DriveInfo, ScanProgress, ScanResult, LogEntry } from './types';
+import type { DriveInfo, ScanProgress, ScanResult, LogEntry, BrowseResult, CachedScan } from './types';
 
 const API_BASE = '/api';
 
@@ -75,4 +75,26 @@ export function startScan(
   })();
 
   return () => controller.abort();
+}
+
+export async function browse(path: string): Promise<BrowseResult> {
+  const res = await fetch(`${API_BASE}/browse?path=${encodeURIComponent(path)}`);
+  if (!res.ok) throw new Error('No scan data available for this path');
+  return res.json();
+}
+
+export async function fetchCachedScans(): Promise<CachedScan[]> {
+  const res = await fetch(`${API_BASE}/cache`);
+  if (!res.ok) throw new Error('Failed to fetch cached scans');
+  return res.json();
+}
+
+export async function loadCachedScan(id: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/cache/${encodeURIComponent(id)}/load`, { method: 'POST' });
+  if (!res.ok) throw new Error('Failed to load cached scan');
+}
+
+export async function deleteCachedScan(id: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/cache/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  if (!res.ok) throw new Error('Failed to delete cached scan');
 }

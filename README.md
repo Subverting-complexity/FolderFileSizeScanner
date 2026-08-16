@@ -1,6 +1,6 @@
 # Folder & File Size Scanner
 
-A local web application that scans drives and folders on Windows, showing the largest files and suggesting directories to clean up. Built with a .NET backend (SSE streaming) and a React + Vite frontend.
+A local web application that scans drives and folders on Windows, showing the largest files, directory size breakdowns, and cleanup suggestions. Built with a .NET backend (SSE streaming) and a React + Vite frontend.
 
 ## Prerequisites
 
@@ -33,30 +33,63 @@ publish.bat
 
 Produces a self-contained `publish/FolderFileSizeScanner.exe` that runs without requiring .NET or Node.js installed. Double-click to launch.
 
-## How It Works
+## Features
 
-1. **Drive selection** — The home screen lists all ready drives with usage bars. You can also type any folder path.
-2. **Real-time scanning** — The backend walks the file tree using `EnumerateFileSystemInfos` (one syscall per directory entry) and streams progress, log entries, and results via Server-Sent Events.
-3. **Results** — Three tabs:
-   - **Largest Files** — Top 100 files sorted by size, with path, extension, and last-modified date.
-   - **Cleanup Suggestions** — Known cache/temp directories (npm, NuGet, browser caches, Windows temp, etc.) and file types (`.tmp`, `.log`, `.bak`, `.dmp`, `.old`) with total sizes.
-   - **Scan Log** — Timestamped log with filterable info/warning/error levels.
+### Drive & Folder Scanning
+- Select any drive or enter a custom folder path to scan
+- Real-time progress with file/directory counts, total size, and estimated completion percentage
+- Streams results via Server-Sent Events — no polling
 
-Only one scan runs at a time. The app enforces single-instance via a global mutex.
+### Directory Browser
+- Navigate the scanned directory tree with clickable breadcrumbs
+- Each directory shows a size bar proportional to its parent, total size in GB, and file count
+- Directories are sorted largest-first so you can immediately see where space is used
+- Files within each directory are shown below with their own size bars
+
+### Largest Files
+- Top 100 files sorted by size with path, extension, and last-modified date
+
+### Cleanup Suggestions
+- Known cache and temp directories (npm, NuGet, browser caches, Windows temp, Recycle Bin, etc.)
+- File types that are often safe to remove (`.tmp`, `.log`, `.bak`, `.dmp`, `.old`)
+- All suggestions are informational — the app never modifies files
+
+### Scan History & Caching
+- Every scan is automatically cached to `%LocalAppData%\FolderFileSizeScanner\cache`
+- Load previous scans from the History panel to browse results without rescanning
+- Compare how disk usage changes over time
+- Cache auto-prunes to the 20 most recent scans
+
+### Dark / Light Mode
+- Three-way toggle: Light, Dark, or System (follows device theme)
+- Preference is saved to localStorage and remembered across sessions
 
 ## Project Structure
 
 ```
 backend/              .NET 10 minimal API
-  Program.cs          Entry point, API endpoints, SSE streaming
-  ScannerService.cs   File-tree walker with progress reporting
+  Program.cs          Entry point, API endpoints (drives, scan, browse, cache)
+  ScannerService.cs   File-tree walker, directory size aggregation, caching
   Models.cs           Shared record types
 frontend/             React + TypeScript + Vite
-  src/App.tsx         Main UI (drive selection, scan progress, results)
-  src/api.ts          SSE client for /api/scan
+  src/App.tsx         UI: drive selection, scan progress, results, directory browser
+  src/api.ts          API client (SSE for scan, REST for browse/cache)
   src/types.ts        TypeScript interfaces matching backend models
-backend.Tests/        xUnit integration and unit tests
+  src/App.css         Full dark/light theme with CSS custom properties
+backend.Tests/        xUnit unit + integration tests (42 tests)
 ```
+
+## API Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/drives` | List ready drives with usage stats |
+| GET | `/api/scan?path=...` | SSE stream: scan a path (progress, logs, result) |
+| GET | `/api/browse?path=...` | Browse directory from last scan's cached data |
+| GET | `/api/cache` | List cached scan summaries |
+| GET | `/api/cache/{id}` | Get full cached scan detail |
+| POST | `/api/cache/{id}/load` | Load cached scan into memory for browsing |
+| DELETE | `/api/cache/{id}` | Delete a cached scan |
 
 ## Running Tests
 
@@ -70,4 +103,4 @@ dotnet test
 - The scanner skips reparse points (symlinks, junctions) to avoid infinite loops.
 - Access-denied errors are counted and summarized rather than failing the scan.
 - Scanning a drive root shows an estimated percentage based on used disk space.
-- The app does **not** modify or delete any files — suggestions are informational only.
+- Only one scan runs at a time; the app enforces single-instance via a global mutex.
