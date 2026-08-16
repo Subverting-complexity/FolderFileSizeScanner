@@ -77,6 +77,7 @@ frontend/             React + TypeScript + Vite
   src/types.ts        TypeScript interfaces matching backend models
   src/App.css         Full dark/light theme with CSS custom properties
 backend.Tests/        xUnit unit + integration tests (42 tests)
+frontend/src/utils.test.ts  Vitest unit tests for utilities (28 tests)
 ```
 
 ## API Endpoints
@@ -96,6 +97,9 @@ backend.Tests/        xUnit unit + integration tests (42 tests)
 ```
 cd backend.Tests
 dotnet test
+
+cd ../frontend
+npm test
 ```
 
 ## Notes

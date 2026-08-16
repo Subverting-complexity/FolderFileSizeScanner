@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import type { DriveInfo, ScanProgress, ScanResult, LogEntry, BrowseResult, CachedScan } from './types';
 import { fetchDrives, startScan, browse, fetchCachedScans, loadCachedScan, deleteCachedScan } from './api';
+import { formatSize, formatDate, formatElapsed, truncatePath, barColor, buildBreadcrumbs } from './utils';
 
 type Theme = 'light' | 'dark' | 'system';
 
@@ -40,50 +41,6 @@ function ThemeToggle({ theme, setTheme }: { theme: Theme; setTheme: (t: Theme) =
       {icon}
     </button>
   );
-}
-
-function formatSize(bytes: number): string {
-  if (bytes === 0) return '0 B';
-  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(1024));
-  const index = Math.min(i, units.length - 1);
-  const value = bytes / Math.pow(1024, index);
-  return `${value.toFixed(index === 0 ? 0 : 1)} ${units[index]}`;
-}
-
-function formatDate(iso: string): string {
-  const date = new Date(iso);
-  return date.toLocaleDateString(undefined, {
-    year: 'numeric',
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
-}
-
-function formatElapsed(seconds: number): string {
-  if (seconds < 60) return `${seconds.toFixed(1)}s`;
-  const mins = Math.floor(seconds / 60);
-  const secs = Math.floor(seconds % 60);
-  return `${mins}m ${secs}s`;
-}
-
-function truncatePath(path: string, maxLen: number = 80): string {
-  if (path.length <= maxLen) return path;
-  const start = path.substring(0, 20);
-  const end = path.substring(path.length - (maxLen - 23));
-  return `${start}...${end}`;
-}
-
-function barColor(pct: number): string {
-  if (pct >= 50) return '#dc2626';
-  if (pct >= 35) return '#ea580c';
-  if (pct >= 20) return '#d97706';
-  if (pct >= 10) return '#65a30d';
-  if (pct >= 5) return '#0d9488';
-  if (pct >= 1) return '#0891b2';
-  return '#2563eb';
 }
 
 function SortIndicator({ active, dir }: { active: boolean; dir: 'asc' | 'desc' }) {
@@ -217,22 +174,7 @@ function DirectoryBrowser({ rootPath }: { rootPath: string }) {
     loadDir(rootPath);
   }, [rootPath, loadDir]);
 
-  const breadcrumbs = (() => {
-    const parts: { label: string; path: string }[] = [];
-    let p = currentPath;
-    while (p) {
-      const name = p.length <= 3 ? p : p.split('\\').pop() || p;
-      parts.unshift({ label: name, path: p });
-      const parent = p.substring(0, p.lastIndexOf('\\'));
-      if (parent === p || parent.length < rootPath.replace(/\\$/, '').length) break;
-      p = parent;
-    }
-    if (parts.length === 0 || parts[0].path !== rootPath) {
-      const rootLabel = rootPath.length <= 3 ? rootPath : rootPath.split('\\').pop() || rootPath;
-      parts.unshift({ label: rootLabel, path: rootPath });
-    }
-    return parts;
-  })();
+  const breadcrumbs = buildBreadcrumbs(rootPath, currentPath);
 
   if (loading && !browseData) {
     return (
