@@ -45,9 +45,6 @@
   --log-error-bg: rgba(239, 68, 68, 0.06);
   --error-text: #fca5a5;
   --browser-bar-bg: var(--bg-tertiary);
-  --browser-bar-fill: var(--accent);
-  --browser-bar-heavy: var(--orange);
-  --browser-file-bar: #6366f1;
 }
 
 [data-theme="light"] {
@@ -80,9 +77,6 @@
   --log-error-bg: rgba(220, 38, 38, 0.06);
   --error-text: #dc2626;
   --browser-bar-bg: #e2e8f0;
-  --browser-bar-fill: var(--accent);
-  --browser-bar-heavy: var(--orange);
-  --browser-file-bar: #6366f1;
 }
 
 body {
@@ -1052,7 +1046,6 @@ body {
 
 .browser-bar-fill {
   height: 100%;
-  background: var(--browser-bar-fill);
   border-radius: 4px;
   transition: width 0.2s ease;
 }
