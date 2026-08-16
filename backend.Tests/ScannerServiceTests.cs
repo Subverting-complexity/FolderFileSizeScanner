@@ -26,6 +26,20 @@ public class ScannerServiceTests : IDisposable
         File.WriteAllBytes(fullPath, new byte[sizeBytes]);
     }
 
+    private async Task<ScanResult> RunScan()
+    {
+        ScanResult? result = null;
+        await _scanner.ScanAsync(
+            _testDir,
+            _ => Task.CompletedTask,
+            r => { result = r; return Task.CompletedTask; },
+            _ => Task.CompletedTask,
+            CancellationToken.None
+        );
+        Assert.NotNull(result);
+        return result;
+    }
+
     [Fact]
     public async Task ScanAsync_EmptyDirectory_ReturnsZeroCounts()
     {
@@ -56,17 +70,8 @@ public class ScannerServiceTests : IDisposable
         CreateFile("file2.txt", 200);
         CreateFile("sub/file3.txt", 300);
 
-        ScanResult? result = null;
+        var result = await RunScan();
 
-        await _scanner.ScanAsync(
-            _testDir,
-            _ => Task.CompletedTask,
-            r => { result = r; return Task.CompletedTask; },
-            _ => Task.CompletedTask,
-            CancellationToken.None
-        );
-
-        Assert.NotNull(result);
         Assert.Equal(3, result.TotalFiles);
         Assert.Equal(600, result.TotalSize);
     }
@@ -78,17 +83,8 @@ public class ScannerServiceTests : IDisposable
         CreateFile("medium.txt", 500);
         CreateFile("large.txt", 1000);
 
-        ScanResult? result = null;
+        var result = await RunScan();
 
-        await _scanner.ScanAsync(
-            _testDir,
-            _ => Task.CompletedTask,
-            r => { result = r; return Task.CompletedTask; },
-            _ => Task.CompletedTask,
-            CancellationToken.None
-        );
-
-        Assert.NotNull(result);
         Assert.Equal(3, result.LargestFiles.Count);
         Assert.Equal(1000, result.LargestFiles[0].Size);
         Assert.Equal(500, result.LargestFiles[1].Size);
@@ -101,21 +97,11 @@ public class ScannerServiceTests : IDisposable
         for (int i = 0; i < 120; i++)
             CreateFile($"file_{i:D3}.txt", (i + 1) * 10);
 
-        ScanResult? result = null;
+        var result = await RunScan();
 
-        await _scanner.ScanAsync(
-            _testDir,
-            _ => Task.CompletedTask,
-            r => { result = r; return Task.CompletedTask; },
-            _ => Task.CompletedTask,
-            CancellationToken.None
-        );
-
-        Assert.NotNull(result);
         Assert.Equal(120, result.TotalFiles);
         Assert.Equal(100, result.LargestFiles.Count);
         Assert.True(result.LargestFiles[0].Size >= result.LargestFiles[^1].Size);
-        // The smallest file in top-100 should be file_020 (210 bytes), not file_000 (10 bytes)
         Assert.True(result.LargestFiles[^1].Size > 10);
     }
 
@@ -127,17 +113,8 @@ public class ScannerServiceTests : IDisposable
         CreateFile("app.log", 200);
         CreateFile("keep.txt", 100);
 
-        ScanResult? result = null;
+        var result = await RunScan();
 
-        await _scanner.ScanAsync(
-            _testDir,
-            _ => Task.CompletedTask,
-            r => { result = r; return Task.CompletedTask; },
-            _ => Task.CompletedTask,
-            CancellationToken.None
-        );
-
-        Assert.NotNull(result);
         var tmpSuggestion = result.Suggestions.FirstOrDefault(s => s.Path == "*.tmp");
         Assert.NotNull(tmpSuggestion);
         Assert.Equal(800, tmpSuggestion.TotalSize);
@@ -154,17 +131,8 @@ public class ScannerServiceTests : IDisposable
         CreateFile("image.jpg", 100);
         CreateFile("doc.pdf", 200);
 
-        ScanResult? result = null;
+        var result = await RunScan();
 
-        await _scanner.ScanAsync(
-            _testDir,
-            _ => Task.CompletedTask,
-            r => { result = r; return Task.CompletedTask; },
-            _ => Task.CompletedTask,
-            CancellationToken.None
-        );
-
-        Assert.NotNull(result);
         Assert.Contains(result.LargestFiles, f => f.Extension == ".jpg");
         Assert.Contains(result.LargestFiles, f => f.Extension == ".pdf");
     }
@@ -184,9 +152,6 @@ public class ScannerServiceTests : IDisposable
             _ => Task.CompletedTask,
             CancellationToken.None
         );
-
-        // Progress may or may not fire (depends on timing with 250ms throttle)
-        // But the scan should complete without errors
     }
 
     [Fact]
@@ -205,7 +170,6 @@ public class ScannerServiceTests : IDisposable
         ScanResult? result = null;
         var logs = new List<LogEntry>();
 
-        // Cancel after first progress report
         await _scanner.ScanAsync(
             _testDir,
             p =>
@@ -219,8 +183,6 @@ public class ScannerServiceTests : IDisposable
             cts.Token
         );
 
-        // If cancellation happened, result should be null (no onComplete called)
-        // Or if scan was too fast, it might complete normally
         Assert.Contains(logs, l => l.Message.Contains("Starting scan"));
     }
 
@@ -229,17 +191,8 @@ public class ScannerServiceTests : IDisposable
     {
         CreateFile("a/b/c/d/deep.txt", 500);
 
-        ScanResult? result = null;
+        var result = await RunScan();
 
-        await _scanner.ScanAsync(
-            _testDir,
-            _ => Task.CompletedTask,
-            r => { result = r; return Task.CompletedTask; },
-            _ => Task.CompletedTask,
-            CancellationToken.None
-        );
-
-        Assert.NotNull(result);
         Assert.Equal(1, result.TotalFiles);
         Assert.Equal(500, result.TotalSize);
         Assert.True(result.TotalDirs >= 4);
@@ -273,17 +226,8 @@ public class ScannerServiceTests : IDisposable
     public async Task ScanAsync_ElapsedTimeIsPositive()
     {
         CreateFile("file.txt", 100);
-        ScanResult? result = null;
+        var result = await RunScan();
 
-        await _scanner.ScanAsync(
-            _testDir,
-            _ => Task.CompletedTask,
-            r => { result = r; return Task.CompletedTask; },
-            _ => Task.CompletedTask,
-            CancellationToken.None
-        );
-
-        Assert.NotNull(result);
         Assert.True(result.ElapsedSeconds >= 0);
     }
 
@@ -309,18 +253,188 @@ public class ScannerServiceTests : IDisposable
         CreateFile("b/file2.txt", 20);
         CreateFile("a/c/file3.txt", 30);
 
-        ScanResult? result = null;
+        var result = await RunScan();
 
-        await _scanner.ScanAsync(
-            _testDir,
-            _ => Task.CompletedTask,
-            r => { result = r; return Task.CompletedTask; },
-            _ => Task.CompletedTask,
-            CancellationToken.None
-        );
-
-        Assert.NotNull(result);
         Assert.Equal(3, result.TotalFiles);
         Assert.True(result.TotalDirs >= 4); // root + a + b + a/c
+    }
+
+    // ===== Browse Tests =====
+
+    [Fact]
+    public async Task Browse_AfterScan_ReturnsRootData()
+    {
+        CreateFile("file1.txt", 100);
+        CreateFile("sub/file2.txt", 200);
+
+        await RunScan();
+
+        var browse = _scanner.Browse(_testDir);
+        Assert.NotNull(browse);
+        Assert.Equal(300, browse.TotalSize);
+        Assert.Single(browse.Directories);
+        Assert.Single(browse.Files);
+    }
+
+    [Fact]
+    public async Task Browse_SubDirectory_ReturnsChildren()
+    {
+        CreateFile("parent/child1/file1.txt", 100);
+        CreateFile("parent/child2/file2.txt", 200);
+        CreateFile("parent/file3.txt", 50);
+
+        await RunScan();
+
+        var parentPath = Path.Combine(_testDir, "parent");
+        var browse = _scanner.Browse(parentPath);
+        Assert.NotNull(browse);
+        Assert.Equal(2, browse.Directories.Count);
+        Assert.Single(browse.Files);
+        Assert.Equal(50, browse.Files[0].Size);
+    }
+
+    [Fact]
+    public async Task Browse_DirectoriesSortedBySizeDescending()
+    {
+        CreateFile("small/file.txt", 10);
+        CreateFile("large/file.txt", 1000);
+        CreateFile("medium/file.txt", 500);
+
+        await RunScan();
+
+        var browse = _scanner.Browse(_testDir);
+        Assert.NotNull(browse);
+        Assert.Equal(3, browse.Directories.Count);
+        Assert.Equal(1000, browse.Directories[0].Size);
+        Assert.Equal(500, browse.Directories[1].Size);
+        Assert.Equal(10, browse.Directories[2].Size);
+    }
+
+    [Fact]
+    public async Task Browse_PropagatesSubtreeSize()
+    {
+        CreateFile("parent/child/deep/file.txt", 500);
+        CreateFile("parent/own.txt", 100);
+
+        await RunScan();
+
+        var parentPath = Path.Combine(_testDir, "parent");
+        var browse = _scanner.Browse(parentPath);
+        Assert.NotNull(browse);
+        Assert.Equal(600, browse.TotalSize);
+    }
+
+    [Fact]
+    public void Browse_BeforeScan_ReturnsNull()
+    {
+        var browse = _scanner.Browse(@"C:\nonexistent");
+        Assert.Null(browse);
+    }
+
+    [Fact]
+    public async Task Browse_FilesSortedBySizeDescending()
+    {
+        CreateFile("small.txt", 10);
+        CreateFile("large.txt", 1000);
+        CreateFile("medium.txt", 500);
+
+        await RunScan();
+
+        var browse = _scanner.Browse(_testDir);
+        Assert.NotNull(browse);
+        Assert.Equal(3, browse.Files.Count);
+        Assert.Equal(1000, browse.Files[0].Size);
+        Assert.Equal(500, browse.Files[1].Size);
+        Assert.Equal(10, browse.Files[2].Size);
+    }
+
+    [Fact]
+    public async Task Browse_EmptyDirectory_ReturnsEmptyLists()
+    {
+        Directory.CreateDirectory(Path.Combine(_testDir, "empty"));
+
+        await RunScan();
+
+        var emptyPath = Path.Combine(_testDir, "empty");
+        var browse = _scanner.Browse(emptyPath);
+        Assert.NotNull(browse);
+        Assert.Empty(browse.Directories);
+        Assert.Empty(browse.Files);
+        Assert.Equal(0, browse.TotalSize);
+    }
+
+    // ===== Cache Tests =====
+
+    [Fact]
+    public async Task Cache_ScanAutomaticallySaves()
+    {
+        CreateFile("file.txt", 100);
+        await RunScan();
+
+        var cached = _scanner.ListCachedScans();
+        Assert.NotEmpty(cached);
+        Assert.Contains(cached, c => c.RootPath == _testDir);
+    }
+
+    [Fact]
+    public async Task Cache_LoadRestoresBrowseData()
+    {
+        CreateFile("dir1/file1.txt", 100);
+        CreateFile("dir2/file2.txt", 200);
+        await RunScan();
+
+        var cached = _scanner.ListCachedScans();
+        var scan = cached.First(c => c.RootPath == _testDir);
+
+        var freshScanner = new ScannerService();
+        Assert.True(freshScanner.LoadCacheForBrowsing(scan.Id));
+
+        var browse = freshScanner.Browse(_testDir);
+        Assert.NotNull(browse);
+        Assert.Equal(300, browse.TotalSize);
+        Assert.Equal(2, browse.Directories.Count);
+    }
+
+    [Fact]
+    public async Task Cache_DeleteRemovesEntry()
+    {
+        CreateFile("file.txt", 100);
+        await RunScan();
+
+        var cached = _scanner.ListCachedScans();
+        var scan = cached.First(c => c.RootPath == _testDir);
+
+        Assert.True(_scanner.DeleteCachedScan(scan.Id));
+
+        var detail = _scanner.LoadCachedScan(scan.Id);
+        Assert.Null(detail);
+    }
+
+    [Fact]
+    public void Cache_LoadNonexistent_ReturnsFalse()
+    {
+        Assert.False(_scanner.LoadCacheForBrowsing("nonexistent-id"));
+    }
+
+    [Fact]
+    public void Cache_DeleteNonexistent_ReturnsFalse()
+    {
+        Assert.False(_scanner.DeleteCachedScan("nonexistent-id"));
+    }
+
+    [Fact]
+    public async Task Cache_DetailContainsResult()
+    {
+        CreateFile("file.txt", 100);
+        await RunScan();
+
+        var cached = _scanner.ListCachedScans();
+        var scan = cached.First(c => c.RootPath == _testDir);
+
+        var detail = _scanner.LoadCachedScan(scan.Id);
+        Assert.NotNull(detail);
+        Assert.Equal(1, detail.Result.TotalFiles);
+        Assert.Equal(100, detail.Result.TotalSize);
+        Assert.NotEmpty(detail.DirMap);
     }
 }

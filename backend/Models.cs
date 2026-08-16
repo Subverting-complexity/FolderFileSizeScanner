@@ -48,3 +48,46 @@ public record LogEntry(
     string Level,
     string Message
 );
+
+public record DirEntry(
+    string Name,
+    string Path,
+    long Size,
+    int FileCount,
+    int SubDirCount
+);
+
+public record BrowseResult(
+    string Path,
+    long TotalSize,
+    int TotalFiles,
+    List<DirEntry> Directories,
+    List<FileEntry> Files
+);
+
+public record CachedScan(
+    string Id,
+    string RootPath,
+    DateTime ScannedAt,
+    int TotalFiles,
+    int TotalDirs,
+    long TotalSize,
+    double ElapsedSeconds
+);
+
+public record CachedScanDetail(
+    string Id,
+    string RootPath,
+    DateTime ScannedAt,
+    ScanResult Result,
+    Dictionary<string, DirStatsDto> DirMap,
+    Dictionary<string, List<FileEntry>> DirFiles
+);
+
+public record DirStatsDto(
+    long OwnSize,
+    int OwnFileCount,
+    long TotalSize,
+    int TotalFileCount,
+    int SubDirCount
+);

@@ -170,4 +170,110 @@ public class ApiIntegrationTests : IClassFixture<WebApplicationFactory<Program>>
 
         await response.Content.ReadAsStringAsync();
     }
+
+    // ===== Browse Endpoint Tests =====
+
+    [Fact]
+    public async Task Browse_AfterScan_ReturnsDirectoryData()
+    {
+        await WaitForScanLock();
+        CreateFile("dir1/file1.txt", 100);
+        CreateFile("dir2/file2.txt", 200);
+
+        await ScanAndReadFull(_testDir);
+
+        var response = await _client.GetAsync($"/api/browse?path={Uri.EscapeDataString(_testDir)}");
+        response.EnsureSuccessStatusCode();
+
+        var content = await response.Content.ReadAsStringAsync();
+        var result = JsonSerializer.Deserialize<BrowseResult>(content,
+            new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
+
+        Assert.NotNull(result);
+        Assert.Equal(300, result.TotalSize);
+        Assert.Equal(2, result.Directories.Count);
+    }
+
+    [Fact]
+    public async Task Browse_NoScanData_Returns404()
+    {
+        var response = await _client.GetAsync("/api/browse?path=Z:\\NoSuchPath\\12345");
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    // ===== Cache Endpoint Tests =====
+
+    [Fact]
+    public async Task Cache_ListReturnsScans()
+    {
+        await WaitForScanLock();
+        CreateFile("cache_test.txt", 100);
+        await ScanAndReadFull(_testDir);
+
+        var response = await _client.GetAsync("/api/cache");
+        response.EnsureSuccessStatusCode();
+
+        var content = await response.Content.ReadAsStringAsync();
+        var scans = JsonSerializer.Deserialize<List<CachedScan>>(content,
+            new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
+
+        Assert.NotNull(scans);
+        Assert.NotEmpty(scans);
+    }
+
+    [Fact]
+    public async Task Cache_LoadAndBrowse()
+    {
+        await WaitForScanLock();
+        CreateFile("cached/file.txt", 100);
+        await ScanAndReadFull(_testDir);
+
+        var listResponse = await _client.GetAsync("/api/cache");
+        var listContent = await listResponse.Content.ReadAsStringAsync();
+        var scans = JsonSerializer.Deserialize<List<CachedScan>>(listContent,
+            new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
+
+        Assert.NotNull(scans);
+        Assert.NotEmpty(scans);
+
+        var scanId = scans[0].Id;
+
+        await WaitForScanLock();
+        var loadResponse = await _client.PostAsync($"/api/cache/{Uri.EscapeDataString(scanId)}/load", null);
+        loadResponse.EnsureSuccessStatusCode();
+    }
+
+    [Fact]
+    public async Task Cache_DeleteWorks()
+    {
+        await WaitForScanLock();
+        CreateFile("del_test.txt", 100);
+        await ScanAndReadFull(_testDir);
+
+        var listResponse = await _client.GetAsync("/api/cache");
+        var scans = JsonSerializer.Deserialize<List<CachedScan>>(
+            await listResponse.Content.ReadAsStringAsync(),
+            new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
+
+        Assert.NotNull(scans);
+        Assert.NotEmpty(scans);
+
+        var scanId = scans[0].Id;
+        var deleteResponse = await _client.DeleteAsync($"/api/cache/{Uri.EscapeDataString(scanId)}");
+        deleteResponse.EnsureSuccessStatusCode();
+    }
+
+    [Fact]
+    public async Task Cache_LoadNonexistent_Returns404()
+    {
+        var response = await _client.PostAsync("/api/cache/nonexistent-id/load", null);
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Cache_DeleteNonexistent_Returns404()
+    {
+        var response = await _client.DeleteAsync("/api/cache/nonexistent-id");
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
 }

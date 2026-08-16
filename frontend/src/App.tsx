@@ -1,39 +1,51 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import type { DriveInfo, ScanProgress, ScanResult, LogEntry } from './types';
-import { fetchDrives, startScan } from './api';
+import type { DriveInfo, ScanProgress, ScanResult, LogEntry, BrowseResult, CachedScan } from './types';
+import { fetchDrives, startScan, browse, fetchCachedScans, loadCachedScan, deleteCachedScan } from './api';
+import { formatSize, formatDate, formatElapsed, truncatePath, barColor, buildBreadcrumbs } from './utils';
 
-function formatSize(bytes: number): string {
-  if (bytes === 0) return '0 B';
-  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(1024));
-  const index = Math.min(i, units.length - 1);
-  const value = bytes / Math.pow(1024, index);
-  return `${value.toFixed(index === 0 ? 0 : 1)} ${units[index]}`;
-}
+type Theme = 'light' | 'dark' | 'system';
 
-function formatDate(iso: string): string {
-  const date = new Date(iso);
-  return date.toLocaleDateString(undefined, {
-    year: 'numeric',
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
+function useTheme(): [Theme, (t: Theme) => void] {
+  const [theme, setThemeState] = useState<Theme>(() => {
+    const stored = localStorage.getItem('theme');
+    if (stored === 'light' || stored === 'dark') return stored;
+    return 'system';
   });
+
+  useEffect(() => {
+    const root = document.documentElement;
+    if (theme === 'system') {
+      root.removeAttribute('data-theme');
+      localStorage.removeItem('theme');
+    } else {
+      root.setAttribute('data-theme', theme);
+      localStorage.setItem('theme', theme);
+    }
+  }, [theme]);
+
+  return [theme, setThemeState];
 }
 
-function formatElapsed(seconds: number): string {
-  if (seconds < 60) return `${seconds.toFixed(1)}s`;
-  const mins = Math.floor(seconds / 60);
-  const secs = Math.floor(seconds % 60);
-  return `${mins}m ${secs}s`;
+function ThemeToggle({ theme, setTheme }: { theme: Theme; setTheme: (t: Theme) => void }) {
+  const cycle = () => {
+    if (theme === 'system') setTheme('light');
+    else if (theme === 'light') setTheme('dark');
+    else setTheme('system');
+  };
+
+  const icon = theme === 'light' ? '☀️' : theme === 'dark' ? '🌙' : '💻';
+  const label = theme === 'light' ? 'Light' : theme === 'dark' ? 'Dark' : 'System';
+
+  return (
+    <button className="theme-toggle" onClick={cycle} title={`Theme: ${label}`}>
+      {icon}
+    </button>
+  );
 }
 
-function truncatePath(path: string, maxLen: number = 80): string {
-  if (path.length <= maxLen) return path;
-  const start = path.substring(0, 20);
-  const end = path.substring(path.length - (maxLen - 23));
-  return `${start}...${end}`;
+function SortIndicator({ active, dir }: { active: boolean; dir: 'asc' | 'desc' }) {
+  if (!active) return <span className="sort-arrow muted">↕</span>;
+  return <span className="sort-arrow active">{dir === 'asc' ? '↑' : '↓'}</span>;
 }
 
 function driveTypeIcon(driveType: string): string {
@@ -62,15 +74,20 @@ function categoryIcon(category: string): string {
 
 type LogFilter = 'all' | 'info' | 'warning' | 'error';
 
-function LogPanel({ logs, expanded, onToggle }: { logs: LogEntry[]; expanded: boolean; onToggle: () => void }) {
+function LogFilteredView({ logs, full, autoScroll, emptyText }: {
+  logs: LogEntry[];
+  full?: boolean;
+  autoScroll?: boolean;
+  emptyText?: string;
+}) {
   const logEndRef = useRef<HTMLDivElement>(null);
   const [filter, setFilter] = useState<LogFilter>('all');
 
   useEffect(() => {
-    if (expanded && logEndRef.current) {
+    if (autoScroll && logEndRef.current) {
       logEndRef.current.scrollIntoView({ behavior: 'smooth' });
     }
-  }, [logs.length, expanded]);
+  }, [logs.length, autoScroll]);
 
   const infoCount = logs.filter(l => l.level === 'info').length;
   const warningCount = logs.filter(l => l.level === 'warning').length;
@@ -78,62 +95,7 @@ function LogPanel({ logs, expanded, onToggle }: { logs: LogEntry[]; expanded: bo
   const filtered = filter === 'all' ? logs : logs.filter(l => l.level === filter);
 
   return (
-    <div className="log-panel">
-      <button className="log-toggle" onClick={onToggle}>
-        <span className="log-toggle-icon">{expanded ? '\u25BC' : '\u25B6'}</span>
-        <span>Scan Log</span>
-        <span className="log-counts">
-          <span className="log-badge info">{logs.length}</span>
-          {warningCount > 0 && <span className="log-badge warning">{warningCount}</span>}
-          {errorCount > 0 && <span className="log-badge error">{errorCount}</span>}
-        </span>
-      </button>
-      {expanded && (
-        <>
-          <div className="log-filters">
-            <button className={`log-filter-btn ${filter === 'all' ? 'active' : ''}`} onClick={() => setFilter('all')}>
-              All <span className="filter-count">{logs.length}</span>
-            </button>
-            <button className={`log-filter-btn info ${filter === 'info' ? 'active' : ''}`} onClick={() => setFilter('info')}>
-              Info <span className="filter-count">{infoCount}</span>
-            </button>
-            <button className={`log-filter-btn warning ${filter === 'warning' ? 'active' : ''}`} onClick={() => setFilter('warning')} disabled={warningCount === 0}>
-              Warnings <span className="filter-count">{warningCount}</span>
-            </button>
-            <button className={`log-filter-btn error ${filter === 'error' ? 'active' : ''}`} onClick={() => setFilter('error')} disabled={errorCount === 0}>
-              Errors <span className="filter-count">{errorCount}</span>
-            </button>
-          </div>
-          <div className="log-entries">
-            {filtered.length === 0 ? (
-              <div className="log-empty">{filter === 'all' ? 'No log entries yet...' : `No ${filter} entries`}</div>
-            ) : (
-              filtered.map((log, i) => (
-                <div key={i} className={`log-entry log-${log.level}`}>
-                  <span className="log-time">{log.timestamp}</span>
-                  <span className={`log-level-badge ${log.level}`}>{log.level.toUpperCase()}</span>
-                  <span className="log-message">{log.message}</span>
-                </div>
-              ))
-            )}
-            <div ref={logEndRef} />
-          </div>
-        </>
-      )}
-    </div>
-  );
-}
-
-function LogResultsPanel({ logs }: { logs: LogEntry[] }) {
-  const [filter, setFilter] = useState<LogFilter>('all');
-
-  const infoCount = logs.filter(l => l.level === 'info').length;
-  const warningCount = logs.filter(l => l.level === 'warning').length;
-  const errorCount = logs.filter(l => l.level === 'error').length;
-  const filtered = filter === 'all' ? logs : logs.filter(l => l.level === filter);
-
-  return (
-    <div className="log-results-panel">
+    <>
       <div className="log-filters">
         <button className={`log-filter-btn ${filter === 'all' ? 'active' : ''}`} onClick={() => setFilter('all')}>
           All <span className="filter-count">{logs.length}</span>
@@ -148,9 +110,9 @@ function LogResultsPanel({ logs }: { logs: LogEntry[] }) {
           Errors <span className="filter-count">{errorCount}</span>
         </button>
       </div>
-      <div className="log-entries full">
+      <div className={`log-entries${full ? ' full' : ''}`}>
         {filtered.length === 0 ? (
-          <div className="log-empty">{filter === 'all' ? 'No log entries were recorded.' : `No ${filter} entries`}</div>
+          <div className="log-empty">{filter === 'all' ? (emptyText ?? 'No log entries yet...') : `No ${filter} entries`}</div>
         ) : (
           filtered.map((log, i) => (
             <div key={i} className={`log-entry log-${log.level}`}>
@@ -160,24 +122,320 @@ function LogResultsPanel({ logs }: { logs: LogEntry[] }) {
             </div>
           ))
         )}
+        <div ref={logEndRef} />
       </div>
+    </>
+  );
+}
+
+function LogPanel({ logs, expanded, onToggle }: { logs: LogEntry[]; expanded: boolean; onToggle: () => void }) {
+  const warningCount = logs.filter(l => l.level === 'warning').length;
+  const errorCount = logs.filter(l => l.level === 'error').length;
+
+  return (
+    <div className="log-panel">
+      <button className="log-toggle" onClick={onToggle}>
+        <span className="log-toggle-icon">{expanded ? '\u25BC' : '\u25B6'}</span>
+        <span>Scan Log</span>
+        <span className="log-counts">
+          <span className="log-badge info">{logs.length}</span>
+          {warningCount > 0 && <span className="log-badge warning">{warningCount}</span>}
+          {errorCount > 0 && <span className="log-badge error">{errorCount}</span>}
+        </span>
+      </button>
+      {expanded && <LogFilteredView logs={logs} autoScroll />}
+    </div>
+  );
+}
+
+function DirectoryBrowser({ rootPath }: { rootPath: string }) {
+  const [browseData, setBrowseData] = useState<BrowseResult | null>(null);
+  const [currentPath, setCurrentPath] = useState(rootPath);
+  const [loading, setLoading] = useState(false);
+  const [browseError, setBrowseError] = useState<string | null>(null);
+  const [dirSort, setDirSort] = useState<{ key: 'name' | 'size' | 'fileCount'; dir: 'asc' | 'desc' }>({ key: 'size', dir: 'desc' });
+  const [fileSort, setFileSort] = useState<{ key: 'name' | 'size' | 'lastModified'; dir: 'asc' | 'desc' }>({ key: 'size', dir: 'desc' });
+
+  const loadDir = useCallback(async (path: string) => {
+    setLoading(true);
+    setBrowseError(null);
+    try {
+      const data = await browse(path);
+      setBrowseData(data);
+      setCurrentPath(path);
+    } catch {
+      setBrowseError('Failed to load directory data.');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadDir(rootPath);
+  }, [rootPath, loadDir]);
+
+  const breadcrumbs = buildBreadcrumbs(rootPath, currentPath);
+
+  if (loading && !browseData) {
+    return (
+      <div className="loading-drives">
+        <div className="spinner" />
+        <p>Loading directory data...</p>
+      </div>
+    );
+  }
+
+  if (browseError) {
+    return <div className="error-banner">{browseError}</div>;
+  }
+
+  if (!browseData) return null;
+
+  const parentSize = browseData.totalSize || 1;
+
+  const toggleDirSort = (key: typeof dirSort.key) => {
+    setDirSort(prev => prev.key === key ? { key, dir: prev.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: key === 'name' ? 'asc' : 'desc' });
+  };
+  const toggleFileSort = (key: typeof fileSort.key) => {
+    setFileSort(prev => prev.key === key ? { key, dir: prev.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: key === 'name' ? 'asc' : 'desc' });
+  };
+
+  const sortedDirs = [...browseData.directories].sort((a, b) => {
+    const mul = dirSort.dir === 'asc' ? 1 : -1;
+    if (dirSort.key === 'name') return mul * a.name.localeCompare(b.name);
+    if (dirSort.key === 'fileCount') return mul * (a.fileCount - b.fileCount);
+    return mul * (a.size - b.size);
+  });
+
+  const sortedFiles = [...browseData.files].sort((a, b) => {
+    const mul = fileSort.dir === 'asc' ? 1 : -1;
+    if (fileSort.key === 'name') return mul * (a.path.split('\\').pop() || '').localeCompare(b.path.split('\\').pop() || '');
+    if (fileSort.key === 'lastModified') return mul * (new Date(a.lastModified).getTime() - new Date(b.lastModified).getTime());
+    return mul * (a.size - b.size);
+  });
+
+  return (
+    <div className="browser-section">
+      <div className="breadcrumb-bar">
+        {breadcrumbs.map((crumb, i) => (
+          <span key={crumb.path}>
+            {i > 0 && <span className="breadcrumb-sep">&rsaquo;</span>}
+            <button
+              className={`breadcrumb-btn ${crumb.path === currentPath ? 'active' : ''}`}
+              onClick={() => loadDir(crumb.path)}
+              disabled={crumb.path === currentPath}
+            >
+              {crumb.label}
+            </button>
+          </span>
+        ))}
+      </div>
+
+      <div className="browser-summary">
+        <span>{formatSize(browseData.totalSize)} total</span>
+        <span className="browser-summary-sep">|</span>
+        <span>{browseData.directories.length} folders</span>
+        <span className="browser-summary-sep">|</span>
+        <span>{browseData.files.length} files</span>
+      </div>
+
+      {browseData.directories.length > 0 && (
+        <div className="browser-list">
+          <div className="browser-row browser-header">
+            <span className="browser-icon-spacer" />
+            <button className="sort-btn" onClick={() => toggleDirSort('name')}>
+              Name <SortIndicator active={dirSort.key === 'name'} dir={dirSort.dir} />
+            </button>
+            <button className="sort-btn" onClick={() => toggleDirSort('size')}>
+              Usage <SortIndicator active={dirSort.key === 'size'} dir={dirSort.dir} />
+            </button>
+            <button className="sort-btn right" onClick={() => toggleDirSort('size')}>
+              Size <SortIndicator active={dirSort.key === 'size'} dir={dirSort.dir} />
+            </button>
+            <button className="sort-btn right" onClick={() => toggleDirSort('fileCount')}>
+              Files <SortIndicator active={dirSort.key === 'fileCount'} dir={dirSort.dir} />
+            </button>
+          </div>
+          {sortedDirs.map(dir => {
+            const pct = parentSize > 0 ? (dir.size / parentSize) * 100 : 0;
+            return (
+              <button key={dir.path} className="browser-row dir-row" onClick={() => loadDir(dir.path)}>
+                <span className="browser-icon">DIR</span>
+                <span className="browser-name" title={dir.path}>{dir.name}</span>
+                <span className="browser-bar-wrapper">
+                  <span className="browser-bar">
+                    <span
+                      className="browser-bar-fill"
+                      style={{ width: `${Math.max(pct, 0.5)}%`, background: barColor(pct) }}
+                    />
+                  </span>
+                  <span className="browser-pct">{pct.toFixed(1)}%</span>
+                </span>
+                <span className="browser-size">{formatSize(dir.size)}</span>
+                <span className="browser-meta">{dir.fileCount.toLocaleString()} files</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {browseData.files.length > 0 && browseData.directories.length === 0 && (
+        <div className="browser-list">
+          <div className="browser-row browser-header">
+            <span className="browser-icon-spacer" />
+            <button className="sort-btn" onClick={() => toggleFileSort('name')}>
+              Name <SortIndicator active={fileSort.key === 'name'} dir={fileSort.dir} />
+            </button>
+            <button className="sort-btn" onClick={() => toggleFileSort('size')}>
+              Usage <SortIndicator active={fileSort.key === 'size'} dir={fileSort.dir} />
+            </button>
+            <button className="sort-btn right" onClick={() => toggleFileSort('size')}>
+              Size <SortIndicator active={fileSort.key === 'size'} dir={fileSort.dir} />
+            </button>
+            <button className="sort-btn right" onClick={() => toggleFileSort('lastModified')}>
+              Modified <SortIndicator active={fileSort.key === 'lastModified'} dir={fileSort.dir} />
+            </button>
+          </div>
+          {sortedFiles.map(file => {
+            const pct = parentSize > 0 ? (file.size / parentSize) * 100 : 0;
+            return (
+              <div key={file.path} className="browser-row file-row">
+                <span className="browser-icon file-icon">{file.extension?.replace('.', '').toUpperCase().slice(0, 4) || 'FILE'}</span>
+                <span className="browser-name" title={file.path}>{file.path.split('\\').pop()}</span>
+                <span className="browser-bar-wrapper">
+                  <span className="browser-bar">
+                    <span
+                      className="browser-bar-fill"
+                      style={{ width: `${Math.max(pct, 0.3)}%`, background: barColor(pct) }}
+                    />
+                  </span>
+                  <span className="browser-pct">{pct < 0.1 ? '<0.1' : pct.toFixed(1)}%</span>
+                </span>
+                <span className="browser-size">{formatSize(file.size)}</span>
+                <span className="browser-meta">{formatDate(file.lastModified)}</span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {browseData.directories.length === 0 && browseData.files.length === 0 && (
+        <div className="no-suggestions"><p>This directory is empty.</p></div>
+      )}
+    </div>
+  );
+}
+
+function ScanHistory({ onLoadScan, onClose }: {
+  onLoadScan: (id: string, rootPath: string) => void;
+  onClose: () => void;
+}) {
+  const [scans, setScans] = useState<CachedScan[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadingId, setLoadingId] = useState<string | null>(null);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        setScans(await fetchCachedScans());
+      } catch { /* ignore */ }
+      setLoading(false);
+    })();
+  }, []);
+
+  const handleDelete = async (id: string) => {
+    try {
+      await deleteCachedScan(id);
+      setScans(prev => prev.filter(s => s.id !== id));
+    } catch { /* ignore */ }
+  };
+
+  const handleLoad = async (scan: CachedScan) => {
+    setLoadingId(scan.id);
+    try {
+      await loadCachedScan(scan.id);
+      onLoadScan(scan.id, scan.rootPath);
+    } catch { /* ignore */ }
+    setLoadingId(null);
+  };
+
+  if (loading) {
+    return (
+      <div className="history-panel">
+        <div className="history-header">
+          <h3>Scan History</h3>
+          <button className="btn btn-cancel btn-sm" onClick={onClose}>Close</button>
+        </div>
+        <div className="loading-drives"><div className="spinner" /><p>Loading...</p></div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="history-panel">
+      <div className="history-header">
+        <h3>Scan History</h3>
+        <button className="btn btn-cancel btn-sm" onClick={onClose}>Close</button>
+      </div>
+      {scans.length === 0 ? (
+        <div className="no-suggestions"><p>No cached scans found. Run a scan first.</p></div>
+      ) : (
+        <div className="history-list">
+          {scans.map(scan => (
+            <div key={scan.id} className="history-item">
+              <div className="history-item-main">
+                <div className="history-item-path">{scan.rootPath}</div>
+                <div className="history-item-meta">
+                  <span>{formatDate(scan.scannedAt)}</span>
+                  <span className="browser-summary-sep">|</span>
+                  <span>{scan.totalFiles.toLocaleString()} files</span>
+                  <span className="browser-summary-sep">|</span>
+                  <span>{formatSize(scan.totalSize)}</span>
+                  <span className="browser-summary-sep">|</span>
+                  <span>{formatElapsed(scan.elapsedSeconds)}</span>
+                </div>
+              </div>
+              <div className="history-item-actions">
+                <button
+                  className="btn btn-primary btn-sm"
+                  onClick={() => handleLoad(scan)}
+                  disabled={loadingId !== null}
+                >
+                  {loadingId === scan.id ? 'Loading...' : 'Browse'}
+                </button>
+                <button
+                  className="btn btn-cancel btn-sm"
+                  onClick={() => handleDelete(scan.id)}
+                  disabled={loadingId !== null}
+                >
+                  Delete
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
 
 export default function App() {
+  const [theme, setTheme] = useTheme();
   const [drives, setDrives] = useState<DriveInfo[]>([]);
   const [selectedDrive, setSelectedDrive] = useState<string | null>(null);
   const [scanning, setScanning] = useState(false);
   const [progress, setProgress] = useState<ScanProgress | null>(null);
   const [result, setResult] = useState<ScanResult | null>(null);
-  const [activeTab, setActiveTab] = useState<'largest' | 'suggestions' | 'logs'>('largest');
+  const [activeTab, setActiveTab] = useState<'largest' | 'browse' | 'suggestions' | 'logs'>('largest');
   const [error, setError] = useState<string | null>(null);
   const [customPath, setCustomPath] = useState('');
   const [loadingDrives, setLoadingDrives] = useState(true);
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [logsExpanded, setLogsExpanded] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
   const cleanupRef = useRef<(() => void) | null>(null);
+  const [fileTableSort, setFileTableSort] = useState<{ key: 'path' | 'size' | 'extension' | 'lastModified'; dir: 'asc' | 'desc' }>({ key: 'size', dir: 'desc' });
+  const [fileSearch, setFileSearch] = useState('');
 
   useEffect(() => {
     loadDrives();
@@ -205,6 +463,9 @@ export default function App() {
     setActiveTab('largest');
     setLogs([]);
     setLogsExpanded(false);
+    setShowHistory(false);
+    setFileTableSort({ key: 'size', dir: 'desc' });
+    setFileSearch('');
 
     const cleanup = startScan(
       path,
@@ -239,6 +500,7 @@ export default function App() {
     setError(null);
     setCustomPath('');
     setLogs([]);
+    setShowHistory(false);
     loadDrives();
   }, []);
 
@@ -249,11 +511,20 @@ export default function App() {
     }
   }, [customPath, handleStartScan]);
 
+  const handleLoadCachedScan = useCallback((_id: string, rootPath: string) => {
+    setSelectedDrive(rootPath);
+    setResult({ totalFiles: 0, totalDirs: 0, totalSize: 0, elapsedSeconds: 0, scanSpeedGBPerSec: null, largestFiles: [], suggestions: [] });
+    setActiveTab('browse');
+    setShowHistory(false);
+    setLogs([]);
+  }, []);
+
   // Screen 1: Drive Selection
   if (!scanning && !result) {
     return (
       <div className="app">
         <header className="header">
+          <ThemeToggle theme={theme} setTheme={setTheme} />
           <h1>Folder & File Size Scanner</h1>
           <p className="subtitle">Select a drive to scan or enter a custom path</p>
         </header>
@@ -271,7 +542,17 @@ export default function App() {
           <button className="btn btn-primary" onClick={handleCustomScan} disabled={!customPath.trim()}>
             Scan Folder
           </button>
+          <button className="btn btn-cancel" onClick={() => setShowHistory(!showHistory)}>
+            History
+          </button>
         </div>
+
+        {showHistory && (
+          <ScanHistory
+            onLoadScan={handleLoadCachedScan}
+            onClose={() => setShowHistory(false)}
+          />
+        )}
 
         {loadingDrives ? (
           <div className="loading-drives">
@@ -321,6 +602,7 @@ export default function App() {
     return (
       <div className="app">
         <header className="header">
+          <ThemeToggle theme={theme} setTheme={setTheme} />
           <h1>Scanning {selectedDrive}</h1>
           <p className="subtitle">Analyzing folder and file sizes...</p>
         </header>
@@ -385,92 +667,159 @@ export default function App() {
 
   // Screen 3: Results
   if (result) {
+    const showSummary = result.totalFiles > 0;
+    const toggleFileTableSort = (key: typeof fileTableSort.key) => {
+      setFileTableSort(prev => prev.key === key
+        ? { key, dir: prev.dir === 'asc' ? 'desc' : 'asc' }
+        : { key, dir: key === 'path' || key === 'extension' ? 'asc' : 'desc' });
+    };
+    const sortedLargest = [...result.largestFiles].sort((a, b) => {
+      const mul = fileTableSort.dir === 'asc' ? 1 : -1;
+      if (fileTableSort.key === 'path') return mul * a.path.localeCompare(b.path);
+      if (fileTableSort.key === 'extension') return mul * (a.extension || '').localeCompare(b.extension || '');
+      if (fileTableSort.key === 'lastModified') return mul * (new Date(a.lastModified).getTime() - new Date(b.lastModified).getTime());
+      return mul * (a.size - b.size);
+    });
+    const filteredLargest = fileSearch
+      ? sortedLargest.filter(f => f.path.toLowerCase().includes(fileSearch.toLowerCase()) || (f.extension || '').toLowerCase().includes(fileSearch.toLowerCase()))
+      : sortedLargest;
+    const maxFileSize = result.largestFiles.length > 0 ? result.largestFiles[0].size : 1;
     return (
       <div className="app">
         <header className="header">
+          <ThemeToggle theme={theme} setTheme={setTheme} />
           <h1>Scan Results</h1>
           <p className="subtitle">Scan of {selectedDrive} completed</p>
         </header>
 
         {error && <div className="error-banner">{error}</div>}
 
-        <div className="stats-grid five-col summary-bar">
-          <div className="stat-card">
-            <div className="stat-value">{result.totalFiles.toLocaleString()}</div>
-            <div className="stat-label">Total Files</div>
-          </div>
-          <div className="stat-card">
-            <div className="stat-value">{result.totalDirs.toLocaleString()}</div>
-            <div className="stat-label">Total Directories</div>
-          </div>
-          <div className="stat-card">
-            <div className="stat-value">{formatSize(result.totalSize)}</div>
-            <div className="stat-label">Total Size</div>
-          </div>
-          <div className="stat-card">
-            <div className="stat-value">{formatElapsed(result.elapsedSeconds)}</div>
-            <div className="stat-label">Scan Duration</div>
-          </div>
-          <div className="stat-card">
-            <div className="stat-value">
-              {result.scanSpeedGBPerSec != null ? `${result.scanSpeedGBPerSec.toFixed(2)} GB/s` : '--'}
+        {showSummary && (
+          <div className="stats-grid five-col summary-bar">
+            <div className="stat-card">
+              <div className="stat-value">{result.totalFiles.toLocaleString()}</div>
+              <div className="stat-label">Total Files</div>
             </div>
-            <div className="stat-label">Avg Scan Speed</div>
-          </div>
-        </div>
-
-        <div className="tabs">
-          <button
-            className={`tab ${activeTab === 'largest' ? 'active' : ''}`}
-            onClick={() => setActiveTab('largest')}
-          >
-            Largest Files
-            <span className="tab-count">{result.largestFiles.length}</span>
-          </button>
-          <button
-            className={`tab ${activeTab === 'suggestions' ? 'active' : ''}`}
-            onClick={() => setActiveTab('suggestions')}
-          >
-            Cleanup Suggestions
-            <span className="tab-count">{result.suggestions.length}</span>
-          </button>
-          <button
-            className={`tab ${activeTab === 'logs' ? 'active' : ''}`}
-            onClick={() => setActiveTab('logs')}
-          >
-            Scan Log
-            <span className="tab-count">{logs.length}</span>
-          </button>
-        </div>
-
-        {activeTab === 'largest' && (
-          <div className="table-container">
-            <table className="file-table">
-              <thead>
-                <tr>
-                  <th className="col-rank">#</th>
-                  <th className="col-path">File Path</th>
-                  <th className="col-size">Size</th>
-                  <th className="col-ext">Extension</th>
-                  <th className="col-date">Last Modified</th>
-                </tr>
-              </thead>
-              <tbody>
-                {result.largestFiles.slice(0, 100).map((file, i) => (
-                  <tr key={file.path}>
-                    <td className="col-rank">{i + 1}</td>
-                    <td className="col-path" title={file.path}>{file.path}</td>
-                    <td className="col-size">{formatSize(file.size)}</td>
-                    <td className="col-ext">{file.extension || '--'}</td>
-                    <td className="col-date">{formatDate(file.lastModified)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <div className="stat-card">
+              <div className="stat-value">{result.totalDirs.toLocaleString()}</div>
+              <div className="stat-label">Total Directories</div>
+            </div>
+            <div className="stat-card">
+              <div className="stat-value">{formatSize(result.totalSize)}</div>
+              <div className="stat-label">Total Size</div>
+            </div>
+            <div className="stat-card">
+              <div className="stat-value">{formatElapsed(result.elapsedSeconds)}</div>
+              <div className="stat-label">Scan Duration</div>
+            </div>
+            <div className="stat-card">
+              <div className="stat-value">
+                {result.scanSpeedGBPerSec != null ? `${result.scanSpeedGBPerSec.toFixed(2)} GB/s` : '--'}
+              </div>
+              <div className="stat-label">Avg Scan Speed</div>
+            </div>
           </div>
         )}
 
-        {activeTab === 'suggestions' && (
+        <div className="tabs">
+          {showSummary && (
+            <button
+              className={`tab ${activeTab === 'largest' ? 'active' : ''}`}
+              onClick={() => setActiveTab('largest')}
+            >
+              Largest Files
+              <span className="tab-count">{result.largestFiles.length}</span>
+            </button>
+          )}
+          <button
+            className={`tab ${activeTab === 'browse' ? 'active' : ''}`}
+            onClick={() => setActiveTab('browse')}
+          >
+            Browse Directories
+          </button>
+          {showSummary && (
+            <>
+              <button
+                className={`tab ${activeTab === 'suggestions' ? 'active' : ''}`}
+                onClick={() => setActiveTab('suggestions')}
+              >
+                Cleanup Suggestions
+                <span className="tab-count">{result.suggestions.length}</span>
+              </button>
+              <button
+                className={`tab ${activeTab === 'logs' ? 'active' : ''}`}
+                onClick={() => setActiveTab('logs')}
+              >
+                Scan Log
+                <span className="tab-count">{logs.length}</span>
+              </button>
+            </>
+          )}
+        </div>
+
+        {activeTab === 'largest' && showSummary && (
+          <>
+            <div className="table-toolbar">
+              <div className="table-search">
+                <input
+                  type="text"
+                  placeholder="Filter by path or extension..."
+                  value={fileSearch}
+                  onChange={e => setFileSearch(e.target.value)}
+                />
+                {fileSearch && <button className="table-search-clear" onClick={() => setFileSearch('')}>&times;</button>}
+              </div>
+              <span className="table-count">{filteredLargest.length} of {result.largestFiles.length} files</span>
+            </div>
+            <div className="table-container">
+              <table className="file-table">
+                <thead>
+                  <tr>
+                    <th className="col-rank">#</th>
+                    <th className="col-path sortable-th" onClick={() => toggleFileTableSort('path')}>
+                      File Path <SortIndicator active={fileTableSort.key === 'path'} dir={fileTableSort.dir} />
+                    </th>
+                    <th className="col-bar-header"></th>
+                    <th className="col-size sortable-th" onClick={() => toggleFileTableSort('size')}>
+                      Size <SortIndicator active={fileTableSort.key === 'size'} dir={fileTableSort.dir} />
+                    </th>
+                    <th className="col-ext sortable-th" onClick={() => toggleFileTableSort('extension')}>
+                      Ext <SortIndicator active={fileTableSort.key === 'extension'} dir={fileTableSort.dir} />
+                    </th>
+                    <th className="col-date sortable-th" onClick={() => toggleFileTableSort('lastModified')}>
+                      Modified <SortIndicator active={fileTableSort.key === 'lastModified'} dir={fileTableSort.dir} />
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredLargest.slice(0, 100).map((file, i) => {
+                    const filePct = (file.size / maxFileSize) * 100;
+                    return (
+                      <tr key={file.path}>
+                        <td className="col-rank">{i + 1}</td>
+                        <td className="col-path" title={file.path}>{file.path}</td>
+                        <td className="col-bar-cell">
+                          <div className="file-size-bar">
+                            <div className="file-size-bar-fill" style={{ width: `${filePct}%`, background: barColor(filePct) }} />
+                          </div>
+                        </td>
+                        <td className="col-size">{formatSize(file.size)}</td>
+                        <td className="col-ext">{file.extension || '--'}</td>
+                        <td className="col-date">{formatDate(file.lastModified)}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
+
+        {activeTab === 'browse' && selectedDrive && (
+          <DirectoryBrowser rootPath={selectedDrive} />
+        )}
+
+        {activeTab === 'suggestions' && showSummary && (
           <div className="suggestions-section">
             <p className="suggestions-disclaimer">
               These are suggestions only — this tool does not modify any files.
@@ -501,8 +850,10 @@ export default function App() {
           </div>
         )}
 
-        {activeTab === 'logs' && (
-          <LogResultsPanel logs={logs} />
+        {activeTab === 'logs' && showSummary && (
+          <div className="log-results-panel">
+            <LogFilteredView logs={logs} full emptyText="No log entries were recorded." />
+          </div>
         )}
 
         <div className="results-actions">
