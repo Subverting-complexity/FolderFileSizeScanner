@@ -62,15 +62,20 @@ function categoryIcon(category: string): string {
 
 type LogFilter = 'all' | 'info' | 'warning' | 'error';
 
-function LogPanel({ logs, expanded, onToggle }: { logs: LogEntry[]; expanded: boolean; onToggle: () => void }) {
+function LogFilteredView({ logs, full, autoScroll, emptyText }: {
+  logs: LogEntry[];
+  full?: boolean;
+  autoScroll?: boolean;
+  emptyText?: string;
+}) {
   const logEndRef = useRef<HTMLDivElement>(null);
   const [filter, setFilter] = useState<LogFilter>('all');
 
   useEffect(() => {
-    if (expanded && logEndRef.current) {
+    if (autoScroll && logEndRef.current) {
       logEndRef.current.scrollIntoView({ behavior: 'smooth' });
     }
-  }, [logs.length, expanded]);
+  }, [logs.length, autoScroll]);
 
   const infoCount = logs.filter(l => l.level === 'info').length;
   const warningCount = logs.filter(l => l.level === 'warning').length;
@@ -78,62 +83,7 @@ function LogPanel({ logs, expanded, onToggle }: { logs: LogEntry[]; expanded: bo
   const filtered = filter === 'all' ? logs : logs.filter(l => l.level === filter);
 
   return (
-    <div className="log-panel">
-      <button className="log-toggle" onClick={onToggle}>
-        <span className="log-toggle-icon">{expanded ? '\u25BC' : '\u25B6'}</span>
-        <span>Scan Log</span>
-        <span className="log-counts">
-          <span className="log-badge info">{logs.length}</span>
-          {warningCount > 0 && <span className="log-badge warning">{warningCount}</span>}
-          {errorCount > 0 && <span className="log-badge error">{errorCount}</span>}
-        </span>
-      </button>
-      {expanded && (
-        <>
-          <div className="log-filters">
-            <button className={`log-filter-btn ${filter === 'all' ? 'active' : ''}`} onClick={() => setFilter('all')}>
-              All <span className="filter-count">{logs.length}</span>
-            </button>
-            <button className={`log-filter-btn info ${filter === 'info' ? 'active' : ''}`} onClick={() => setFilter('info')}>
-              Info <span className="filter-count">{infoCount}</span>
-            </button>
-            <button className={`log-filter-btn warning ${filter === 'warning' ? 'active' : ''}`} onClick={() => setFilter('warning')} disabled={warningCount === 0}>
-              Warnings <span className="filter-count">{warningCount}</span>
-            </button>
-            <button className={`log-filter-btn error ${filter === 'error' ? 'active' : ''}`} onClick={() => setFilter('error')} disabled={errorCount === 0}>
-              Errors <span className="filter-count">{errorCount}</span>
-            </button>
-          </div>
-          <div className="log-entries">
-            {filtered.length === 0 ? (
-              <div className="log-empty">{filter === 'all' ? 'No log entries yet...' : `No ${filter} entries`}</div>
-            ) : (
-              filtered.map((log, i) => (
-                <div key={i} className={`log-entry log-${log.level}`}>
-                  <span className="log-time">{log.timestamp}</span>
-                  <span className={`log-level-badge ${log.level}`}>{log.level.toUpperCase()}</span>
-                  <span className="log-message">{log.message}</span>
-                </div>
-              ))
-            )}
-            <div ref={logEndRef} />
-          </div>
-        </>
-      )}
-    </div>
-  );
-}
-
-function LogResultsPanel({ logs }: { logs: LogEntry[] }) {
-  const [filter, setFilter] = useState<LogFilter>('all');
-
-  const infoCount = logs.filter(l => l.level === 'info').length;
-  const warningCount = logs.filter(l => l.level === 'warning').length;
-  const errorCount = logs.filter(l => l.level === 'error').length;
-  const filtered = filter === 'all' ? logs : logs.filter(l => l.level === filter);
-
-  return (
-    <div className="log-results-panel">
+    <>
       <div className="log-filters">
         <button className={`log-filter-btn ${filter === 'all' ? 'active' : ''}`} onClick={() => setFilter('all')}>
           All <span className="filter-count">{logs.length}</span>
@@ -148,9 +98,9 @@ function LogResultsPanel({ logs }: { logs: LogEntry[] }) {
           Errors <span className="filter-count">{errorCount}</span>
         </button>
       </div>
-      <div className="log-entries full">
+      <div className={`log-entries${full ? ' full' : ''}`}>
         {filtered.length === 0 ? (
-          <div className="log-empty">{filter === 'all' ? 'No log entries were recorded.' : `No ${filter} entries`}</div>
+          <div className="log-empty">{filter === 'all' ? (emptyText ?? 'No log entries yet...') : `No ${filter} entries`}</div>
         ) : (
           filtered.map((log, i) => (
             <div key={i} className={`log-entry log-${log.level}`}>
@@ -160,7 +110,28 @@ function LogResultsPanel({ logs }: { logs: LogEntry[] }) {
             </div>
           ))
         )}
+        <div ref={logEndRef} />
       </div>
+    </>
+  );
+}
+
+function LogPanel({ logs, expanded, onToggle }: { logs: LogEntry[]; expanded: boolean; onToggle: () => void }) {
+  const warningCount = logs.filter(l => l.level === 'warning').length;
+  const errorCount = logs.filter(l => l.level === 'error').length;
+
+  return (
+    <div className="log-panel">
+      <button className="log-toggle" onClick={onToggle}>
+        <span className="log-toggle-icon">{expanded ? '\u25BC' : '\u25B6'}</span>
+        <span>Scan Log</span>
+        <span className="log-counts">
+          <span className="log-badge info">{logs.length}</span>
+          {warningCount > 0 && <span className="log-badge warning">{warningCount}</span>}
+          {errorCount > 0 && <span className="log-badge error">{errorCount}</span>}
+        </span>
+      </button>
+      {expanded && <LogFilteredView logs={logs} autoScroll />}
     </div>
   );
 }
@@ -502,7 +473,9 @@ export default function App() {
         )}
 
         {activeTab === 'logs' && (
-          <LogResultsPanel logs={logs} />
+          <div className="log-results-panel">
+            <LogFilteredView logs={logs} full emptyText="No log entries were recorded." />
+          </div>
         )}
 
         <div className="results-actions">

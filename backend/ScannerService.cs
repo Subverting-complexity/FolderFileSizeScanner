@@ -107,7 +107,8 @@ public class ScannerService
                             totalSize += size;
                             fileCount++;
 
-                            var entry = new FileEntry(info.FullName, size, info.Extension.ToLowerInvariant(), info.LastWriteTimeUtc);
+                            var ext = info.Extension.ToLowerInvariant();
+                            var entry = new FileEntry(info.FullName, size, ext, info.LastWriteTimeUtc);
 
                             if (topFiles.Count < TopFileCount)
                                 topFiles.Enqueue(entry, size);
@@ -128,11 +129,9 @@ public class ScannerService
                                 }
                             }
 
-                            var ext = info.Extension.ToLowerInvariant();
-                            if (extensionSuggestions.ContainsKey(ext))
+                            if (extensionSuggestions.TryGetValue(ext, out var counts))
                             {
-                                var (s, c) = extensionSuggestions[ext];
-                                extensionSuggestions[ext] = (s + size, c + 1);
+                                extensionSuggestions[ext] = (counts.size + size, counts.count + 1);
                             }
 
                             if (milestoneIndex < FileMilestones.Length && fileCount >= FileMilestones[milestoneIndex])
