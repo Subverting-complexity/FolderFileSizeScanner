@@ -76,6 +76,21 @@ function truncatePath(path: string, maxLen: number = 80): string {
   return `${start}...${end}`;
 }
 
+function barColor(pct: number): string {
+  if (pct >= 50) return '#dc2626';
+  if (pct >= 35) return '#ea580c';
+  if (pct >= 20) return '#d97706';
+  if (pct >= 10) return '#65a30d';
+  if (pct >= 5) return '#0d9488';
+  if (pct >= 1) return '#0891b2';
+  return '#2563eb';
+}
+
+function SortIndicator({ active, dir }: { active: boolean; dir: 'asc' | 'desc' }) {
+  if (!active) return <span className="sort-arrow muted">↕</span>;
+  return <span className="sort-arrow active">{dir === 'asc' ? '↑' : '↓'}</span>;
+}
+
 function driveTypeIcon(driveType: string): string {
   switch (driveType.toLowerCase()) {
     case 'fixed': return 'HDD';
@@ -181,6 +196,8 @@ function DirectoryBrowser({ rootPath }: { rootPath: string }) {
   const [currentPath, setCurrentPath] = useState(rootPath);
   const [loading, setLoading] = useState(false);
   const [browseError, setBrowseError] = useState<string | null>(null);
+  const [dirSort, setDirSort] = useState<{ key: 'name' | 'size' | 'fileCount'; dir: 'asc' | 'desc' }>({ key: 'size', dir: 'desc' });
+  const [fileSort, setFileSort] = useState<{ key: 'name' | 'size' | 'lastModified'; dir: 'asc' | 'desc' }>({ key: 'size', dir: 'desc' });
 
   const loadDir = useCallback(async (path: string) => {
     setLoading(true);
@@ -234,6 +251,27 @@ function DirectoryBrowser({ rootPath }: { rootPath: string }) {
 
   const parentSize = browseData.totalSize || 1;
 
+  const toggleDirSort = (key: typeof dirSort.key) => {
+    setDirSort(prev => prev.key === key ? { key, dir: prev.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: key === 'name' ? 'asc' : 'desc' });
+  };
+  const toggleFileSort = (key: typeof fileSort.key) => {
+    setFileSort(prev => prev.key === key ? { key, dir: prev.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: key === 'name' ? 'asc' : 'desc' });
+  };
+
+  const sortedDirs = [...browseData.directories].sort((a, b) => {
+    const mul = dirSort.dir === 'asc' ? 1 : -1;
+    if (dirSort.key === 'name') return mul * a.name.localeCompare(b.name);
+    if (dirSort.key === 'fileCount') return mul * (a.fileCount - b.fileCount);
+    return mul * (a.size - b.size);
+  });
+
+  const sortedFiles = [...browseData.files].sort((a, b) => {
+    const mul = fileSort.dir === 'asc' ? 1 : -1;
+    if (fileSort.key === 'name') return mul * (a.path.split('\\').pop() || '').localeCompare(b.path.split('\\').pop() || '');
+    if (fileSort.key === 'lastModified') return mul * (new Date(a.lastModified).getTime() - new Date(b.lastModified).getTime());
+    return mul * (a.size - b.size);
+  });
+
   return (
     <div className="browser-section">
       <div className="breadcrumb-bar">
@@ -261,7 +299,22 @@ function DirectoryBrowser({ rootPath }: { rootPath: string }) {
 
       {browseData.directories.length > 0 && (
         <div className="browser-list">
-          {browseData.directories.map(dir => {
+          <div className="browser-row browser-header">
+            <span className="browser-icon-spacer" />
+            <button className="sort-btn" onClick={() => toggleDirSort('name')}>
+              Name <SortIndicator active={dirSort.key === 'name'} dir={dirSort.dir} />
+            </button>
+            <button className="sort-btn" onClick={() => toggleDirSort('size')}>
+              Usage <SortIndicator active={dirSort.key === 'size'} dir={dirSort.dir} />
+            </button>
+            <button className="sort-btn right" onClick={() => toggleDirSort('size')}>
+              Size <SortIndicator active={dirSort.key === 'size'} dir={dirSort.dir} />
+            </button>
+            <button className="sort-btn right" onClick={() => toggleDirSort('fileCount')}>
+              Files <SortIndicator active={dirSort.key === 'fileCount'} dir={dirSort.dir} />
+            </button>
+          </div>
+          {sortedDirs.map(dir => {
             const pct = parentSize > 0 ? (dir.size / parentSize) * 100 : 0;
             return (
               <button key={dir.path} className="browser-row dir-row" onClick={() => loadDir(dir.path)}>
@@ -270,8 +323,8 @@ function DirectoryBrowser({ rootPath }: { rootPath: string }) {
                 <span className="browser-bar-wrapper">
                   <span className="browser-bar">
                     <span
-                      className={`browser-bar-fill ${pct > 50 ? 'heavy' : ''}`}
-                      style={{ width: `${Math.max(pct, 0.5)}%` }}
+                      className="browser-bar-fill"
+                      style={{ width: `${Math.max(pct, 0.5)}%`, background: barColor(pct) }}
                     />
                   </span>
                   <span className="browser-pct">{pct.toFixed(1)}%</span>
@@ -288,7 +341,22 @@ function DirectoryBrowser({ rootPath }: { rootPath: string }) {
         <>
           {browseData.directories.length > 0 && <div className="browser-divider">Files in this directory</div>}
           <div className="browser-list">
-            {browseData.files.map(file => {
+            <div className="browser-row browser-header">
+              <span className="browser-icon-spacer" />
+              <button className="sort-btn" onClick={() => toggleFileSort('name')}>
+                Name <SortIndicator active={fileSort.key === 'name'} dir={fileSort.dir} />
+              </button>
+              <button className="sort-btn" onClick={() => toggleFileSort('size')}>
+                Usage <SortIndicator active={fileSort.key === 'size'} dir={fileSort.dir} />
+              </button>
+              <button className="sort-btn right" onClick={() => toggleFileSort('size')}>
+                Size <SortIndicator active={fileSort.key === 'size'} dir={fileSort.dir} />
+              </button>
+              <button className="sort-btn right" onClick={() => toggleFileSort('lastModified')}>
+                Modified <SortIndicator active={fileSort.key === 'lastModified'} dir={fileSort.dir} />
+              </button>
+            </div>
+            {sortedFiles.map(file => {
               const pct = parentSize > 0 ? (file.size / parentSize) * 100 : 0;
               return (
                 <div key={file.path} className="browser-row file-row">
@@ -297,8 +365,8 @@ function DirectoryBrowser({ rootPath }: { rootPath: string }) {
                   <span className="browser-bar-wrapper">
                     <span className="browser-bar">
                       <span
-                        className="browser-bar-fill file-bar"
-                        style={{ width: `${Math.max(pct, 0.3)}%` }}
+                        className="browser-bar-fill"
+                        style={{ width: `${Math.max(pct, 0.3)}%`, background: barColor(pct) }}
                       />
                     </span>
                     <span className="browser-pct">{pct < 0.1 ? '<0.1' : pct.toFixed(1)}%</span>
@@ -427,6 +495,8 @@ export default function App() {
   const [logsExpanded, setLogsExpanded] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const cleanupRef = useRef<(() => void) | null>(null);
+  const [fileTableSort, setFileTableSort] = useState<{ key: 'path' | 'size' | 'extension' | 'lastModified'; dir: 'asc' | 'desc' }>({ key: 'size', dir: 'desc' });
+  const [fileSearch, setFileSearch] = useState('');
 
   useEffect(() => {
     loadDrives();
@@ -455,6 +525,8 @@ export default function App() {
     setLogs([]);
     setLogsExpanded(false);
     setShowHistory(false);
+    setFileTableSort({ key: 'size', dir: 'desc' });
+    setFileSearch('');
 
     const cleanup = startScan(
       path,
@@ -657,6 +729,22 @@ export default function App() {
   // Screen 3: Results
   if (result) {
     const showSummary = result.totalFiles > 0;
+    const toggleFileTableSort = (key: typeof fileTableSort.key) => {
+      setFileTableSort(prev => prev.key === key
+        ? { key, dir: prev.dir === 'asc' ? 'desc' : 'asc' }
+        : { key, dir: key === 'path' || key === 'extension' ? 'asc' : 'desc' });
+    };
+    const sortedLargest = [...result.largestFiles].sort((a, b) => {
+      const mul = fileTableSort.dir === 'asc' ? 1 : -1;
+      if (fileTableSort.key === 'path') return mul * a.path.localeCompare(b.path);
+      if (fileTableSort.key === 'extension') return mul * (a.extension || '').localeCompare(b.extension || '');
+      if (fileTableSort.key === 'lastModified') return mul * (new Date(a.lastModified).getTime() - new Date(b.lastModified).getTime());
+      return mul * (a.size - b.size);
+    });
+    const filteredLargest = fileSearch
+      ? sortedLargest.filter(f => f.path.toLowerCase().includes(fileSearch.toLowerCase()) || (f.extension || '').toLowerCase().includes(fileSearch.toLowerCase()))
+      : sortedLargest;
+    const maxFileSize = result.largestFiles.length > 0 ? result.largestFiles[0].size : 1;
     return (
       <div className="app">
         <header className="header">
@@ -731,30 +819,61 @@ export default function App() {
         </div>
 
         {activeTab === 'largest' && showSummary && (
-          <div className="table-container">
-            <table className="file-table">
-              <thead>
-                <tr>
-                  <th className="col-rank">#</th>
-                  <th className="col-path">File Path</th>
-                  <th className="col-size">Size</th>
-                  <th className="col-ext">Extension</th>
-                  <th className="col-date">Last Modified</th>
-                </tr>
-              </thead>
-              <tbody>
-                {result.largestFiles.slice(0, 100).map((file, i) => (
-                  <tr key={file.path}>
-                    <td className="col-rank">{i + 1}</td>
-                    <td className="col-path" title={file.path}>{file.path}</td>
-                    <td className="col-size">{formatSize(file.size)}</td>
-                    <td className="col-ext">{file.extension || '--'}</td>
-                    <td className="col-date">{formatDate(file.lastModified)}</td>
+          <>
+            <div className="table-toolbar">
+              <div className="table-search">
+                <input
+                  type="text"
+                  placeholder="Filter by path or extension..."
+                  value={fileSearch}
+                  onChange={e => setFileSearch(e.target.value)}
+                />
+                {fileSearch && <button className="table-search-clear" onClick={() => setFileSearch('')}>&times;</button>}
+              </div>
+              <span className="table-count">{filteredLargest.length} of {result.largestFiles.length} files</span>
+            </div>
+            <div className="table-container">
+              <table className="file-table">
+                <thead>
+                  <tr>
+                    <th className="col-rank">#</th>
+                    <th className="col-path sortable-th" onClick={() => toggleFileTableSort('path')}>
+                      File Path <SortIndicator active={fileTableSort.key === 'path'} dir={fileTableSort.dir} />
+                    </th>
+                    <th className="col-bar-header"></th>
+                    <th className="col-size sortable-th" onClick={() => toggleFileTableSort('size')}>
+                      Size <SortIndicator active={fileTableSort.key === 'size'} dir={fileTableSort.dir} />
+                    </th>
+                    <th className="col-ext sortable-th" onClick={() => toggleFileTableSort('extension')}>
+                      Ext <SortIndicator active={fileTableSort.key === 'extension'} dir={fileTableSort.dir} />
+                    </th>
+                    <th className="col-date sortable-th" onClick={() => toggleFileTableSort('lastModified')}>
+                      Modified <SortIndicator active={fileTableSort.key === 'lastModified'} dir={fileTableSort.dir} />
+                    </th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody>
+                  {filteredLargest.slice(0, 100).map((file, i) => {
+                    const filePct = (file.size / maxFileSize) * 100;
+                    return (
+                      <tr key={file.path}>
+                        <td className="col-rank">{i + 1}</td>
+                        <td className="col-path" title={file.path}>{file.path}</td>
+                        <td className="col-bar-cell">
+                          <div className="file-size-bar">
+                            <div className="file-size-bar-fill" style={{ width: `${filePct}%`, background: barColor(filePct) }} />
+                          </div>
+                        </td>
+                        <td className="col-size">{formatSize(file.size)}</td>
+                        <td className="col-ext">{file.extension || '--'}</td>
+                        <td className="col-date">{formatDate(file.lastModified)}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </>
         )}
 
         {activeTab === 'browse' && selectedDrive && (
