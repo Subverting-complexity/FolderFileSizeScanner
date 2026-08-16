@@ -337,47 +337,44 @@ function DirectoryBrowser({ rootPath }: { rootPath: string }) {
         </div>
       )}
 
-      {browseData.files.length > 0 && (
-        <>
-          {browseData.directories.length > 0 && <div className="browser-divider">Files in this directory</div>}
-          <div className="browser-list">
-            <div className="browser-row browser-header">
-              <span className="browser-icon-spacer" />
-              <button className="sort-btn" onClick={() => toggleFileSort('name')}>
-                Name <SortIndicator active={fileSort.key === 'name'} dir={fileSort.dir} />
-              </button>
-              <button className="sort-btn" onClick={() => toggleFileSort('size')}>
-                Usage <SortIndicator active={fileSort.key === 'size'} dir={fileSort.dir} />
-              </button>
-              <button className="sort-btn right" onClick={() => toggleFileSort('size')}>
-                Size <SortIndicator active={fileSort.key === 'size'} dir={fileSort.dir} />
-              </button>
-              <button className="sort-btn right" onClick={() => toggleFileSort('lastModified')}>
-                Modified <SortIndicator active={fileSort.key === 'lastModified'} dir={fileSort.dir} />
-              </button>
-            </div>
-            {sortedFiles.map(file => {
-              const pct = parentSize > 0 ? (file.size / parentSize) * 100 : 0;
-              return (
-                <div key={file.path} className="browser-row file-row">
-                  <span className="browser-icon file-icon">{file.extension?.replace('.', '').toUpperCase().slice(0, 4) || 'FILE'}</span>
-                  <span className="browser-name" title={file.path}>{file.path.split('\\').pop()}</span>
-                  <span className="browser-bar-wrapper">
-                    <span className="browser-bar">
-                      <span
-                        className="browser-bar-fill"
-                        style={{ width: `${Math.max(pct, 0.3)}%`, background: barColor(pct) }}
-                      />
-                    </span>
-                    <span className="browser-pct">{pct < 0.1 ? '<0.1' : pct.toFixed(1)}%</span>
-                  </span>
-                  <span className="browser-size">{formatSize(file.size)}</span>
-                  <span className="browser-meta">{formatDate(file.lastModified)}</span>
-                </div>
-              );
-            })}
+      {browseData.files.length > 0 && browseData.directories.length === 0 && (
+        <div className="browser-list">
+          <div className="browser-row browser-header">
+            <span className="browser-icon-spacer" />
+            <button className="sort-btn" onClick={() => toggleFileSort('name')}>
+              Name <SortIndicator active={fileSort.key === 'name'} dir={fileSort.dir} />
+            </button>
+            <button className="sort-btn" onClick={() => toggleFileSort('size')}>
+              Usage <SortIndicator active={fileSort.key === 'size'} dir={fileSort.dir} />
+            </button>
+            <button className="sort-btn right" onClick={() => toggleFileSort('size')}>
+              Size <SortIndicator active={fileSort.key === 'size'} dir={fileSort.dir} />
+            </button>
+            <button className="sort-btn right" onClick={() => toggleFileSort('lastModified')}>
+              Modified <SortIndicator active={fileSort.key === 'lastModified'} dir={fileSort.dir} />
+            </button>
           </div>
-        </>
+          {sortedFiles.map(file => {
+            const pct = parentSize > 0 ? (file.size / parentSize) * 100 : 0;
+            return (
+              <div key={file.path} className="browser-row file-row">
+                <span className="browser-icon file-icon">{file.extension?.replace('.', '').toUpperCase().slice(0, 4) || 'FILE'}</span>
+                <span className="browser-name" title={file.path}>{file.path.split('\\').pop()}</span>
+                <span className="browser-bar-wrapper">
+                  <span className="browser-bar">
+                    <span
+                      className="browser-bar-fill"
+                      style={{ width: `${Math.max(pct, 0.3)}%`, background: barColor(pct) }}
+                    />
+                  </span>
+                  <span className="browser-pct">{pct < 0.1 ? '<0.1' : pct.toFixed(1)}%</span>
+                </span>
+                <span className="browser-size">{formatSize(file.size)}</span>
+                <span className="browser-meta">{formatDate(file.lastModified)}</span>
+              </div>
+            );
+          })}
+        </div>
       )}
 
       {browseData.directories.length === 0 && browseData.files.length === 0 && (
