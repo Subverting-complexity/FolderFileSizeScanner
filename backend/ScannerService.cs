@@ -311,8 +311,9 @@ public class ScannerService
         try
         {
             var id = DateTime.UtcNow.ToString("yyyyMMdd-HHmmss-fff") + "-" + Guid.NewGuid().ToString("N")[..4];
+            var scannedAt = DateTime.UtcNow;
             var detail = new CachedScanDetail(
-                id, rootPath, DateTime.UtcNow, result,
+                id, rootPath, scannedAt, result,
                 dirMap.ToDictionary(
                     kv => kv.Key,
                     kv => new DirStatsDto(kv.Value.OwnSize, kv.Value.OwnFileCount,
@@ -321,6 +322,12 @@ public class ScannerService
             var json = JsonSerializer.Serialize(detail, CacheJsonOptions);
             var filePath = Path.Combine(CacheDir, $"scan-{id}.json");
             File.WriteAllText(filePath, json);
+
+            var meta = new CachedScan(id, rootPath, scannedAt,
+                result.TotalFiles, result.TotalDirs, result.TotalSize, result.ElapsedSeconds);
+            var metaJson = JsonSerializer.Serialize(meta, CacheJsonOptions);
+            File.WriteAllText(Path.Combine(CacheDir, $"meta-{id}.json"), metaJson);
+
             PruneCacheFiles();
         }
         catch { }
@@ -336,6 +343,15 @@ public class ScannerService
             {
                 try
                 {
+                    var scanFileName = Path.GetFileName(file);
+                    var metaFile = Path.Combine(CacheDir, "meta-" + scanFileName[5..]);
+                    if (File.Exists(metaFile))
+                    {
+                        var metaJson = File.ReadAllText(metaFile);
+                        var meta = JsonSerializer.Deserialize<CachedScan>(metaJson, CacheJsonOptions);
+                        if (meta != null) { results.Add(meta); continue; }
+                    }
+
                     using var stream = File.OpenRead(file);
                     var detail = JsonSerializer.Deserialize<CachedScanDetail>(stream, CacheJsonOptions);
                     if (detail != null)
@@ -405,6 +421,7 @@ public class ScannerService
             if (File.Exists(filePath))
             {
                 File.Delete(filePath);
+                try { File.Delete(Path.Combine(CacheDir, $"meta-{id}.json")); } catch { }
                 return true;
             }
         }
@@ -421,7 +438,11 @@ public class ScannerService
                 .Skip(MaxCachedScans)
                 .ToList();
             foreach (var file in files)
+            {
                 try { File.Delete(file); } catch { }
+                var metaFile = Path.Combine(CacheDir, "meta-" + Path.GetFileName(file)[5..]);
+                try { File.Delete(metaFile); } catch { }
+            }
         }
         catch { }
     }
