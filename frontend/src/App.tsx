@@ -543,7 +543,7 @@ export default function App() {
     }
   }, [customPath, handleStartScan]);
 
-  const handleLoadCachedScan = useCallback((id: string, rootPath: string, cachedResult?: ScanResult) => {
+  const handleLoadCachedScan = useCallback((_id: string, rootPath: string, cachedResult?: ScanResult) => {
     setSelectedDrive(rootPath);
     setResult(cachedResult ?? { totalFiles: 0, totalDirs: 0, totalSize: 0, elapsedSeconds: 0, scanSpeedGBPerSec: null, largestFiles: [], suggestions: [] });
     setActiveTab(cachedResult && cachedResult.largestFiles.length > 0 ? 'largest' : 'browse');
