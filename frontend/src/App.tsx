@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import type { DriveInfo, ScanProgress, ScanResult, LogEntry, BrowseResult, CachedScan } from './types';
 import { fetchDrives, startScan, browse, fetchCachedScans, loadCachedScan, deleteCachedScan } from './api';
 import { formatSize, formatDate, formatElapsed, truncatePath, barColor, buildBreadcrumbs } from './utils';
@@ -89,9 +89,15 @@ function LogFilteredView({ logs, full, autoScroll, emptyText }: {
     }
   }, [logs.length, autoScroll]);
 
-  const infoCount = logs.filter(l => l.level === 'info').length;
-  const warningCount = logs.filter(l => l.level === 'warning').length;
-  const errorCount = logs.filter(l => l.level === 'error').length;
+  const { infoCount, warningCount, errorCount } = useMemo(() => {
+    let info = 0, warning = 0, error = 0;
+    for (const l of logs) {
+      if (l.level === 'info') info++;
+      else if (l.level === 'warning') warning++;
+      else if (l.level === 'error') error++;
+    }
+    return { infoCount: info, warningCount: warning, errorCount: error };
+  }, [logs]);
   const filtered = filter === 'all' ? logs : logs.filter(l => l.level === filter);
 
   return (
