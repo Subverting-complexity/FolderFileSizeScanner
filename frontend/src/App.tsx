@@ -239,7 +239,9 @@ function DirectoryBrowser({ rootPath }: { rootPath: string }) {
         <span>{browseData.files.length} files</span>
       </div>
 
-      {browseData.directories.length > 0 && (
+      {browseData.directories.length > 0 && (() => {
+        const maxDirSize = Math.max(...browseData.directories.map(d => d.size), 1);
+        return (
         <div className="browser-list">
           <div className="browser-row browser-header">
             <span className="browser-icon-spacer" />
@@ -258,6 +260,7 @@ function DirectoryBrowser({ rootPath }: { rootPath: string }) {
           </div>
           {sortedDirs.map(dir => {
             const pct = parentSize > 0 ? (dir.size / parentSize) * 100 : 0;
+            const colorPct = (dir.size / maxDirSize) * 100;
             return (
               <button key={dir.path} className="browser-row dir-row" onClick={() => loadDir(dir.path)}>
                 <span className="browser-icon">DIR</span>
@@ -266,7 +269,7 @@ function DirectoryBrowser({ rootPath }: { rootPath: string }) {
                   <span className="browser-bar">
                     <span
                       className="browser-bar-fill"
-                      style={{ width: `${Math.max(pct, 0.5)}%`, background: barColor(pct) }}
+                      style={{ width: `${Math.max(pct, 0.5)}%`, background: barColor(colorPct) }}
                     />
                   </span>
                   <span className="browser-pct">{pct.toFixed(1)}%</span>
@@ -277,9 +280,12 @@ function DirectoryBrowser({ rootPath }: { rootPath: string }) {
             );
           })}
         </div>
-      )}
+        );
+      })()}
 
-      {browseData.files.length > 0 && browseData.directories.length === 0 && (
+      {browseData.files.length > 0 && browseData.directories.length === 0 && (() => {
+        const maxFileSize = Math.max(...browseData.files.map(f => f.size), 1);
+        return (
         <div className="browser-list">
           <div className="browser-row browser-header">
             <span className="browser-icon-spacer" />
@@ -298,6 +304,7 @@ function DirectoryBrowser({ rootPath }: { rootPath: string }) {
           </div>
           {sortedFiles.map(file => {
             const pct = parentSize > 0 ? (file.size / parentSize) * 100 : 0;
+            const colorPct = (file.size / maxFileSize) * 100;
             return (
               <div key={file.path} className="browser-row file-row">
                 <span className="browser-icon file-icon">{file.extension?.replace('.', '').toUpperCase().slice(0, 4) || 'FILE'}</span>
@@ -306,7 +313,7 @@ function DirectoryBrowser({ rootPath }: { rootPath: string }) {
                   <span className="browser-bar">
                     <span
                       className="browser-bar-fill"
-                      style={{ width: `${Math.max(pct, 0.3)}%`, background: barColor(pct) }}
+                      style={{ width: `${Math.max(pct, 0.3)}%`, background: barColor(colorPct) }}
                     />
                   </span>
                   <span className="browser-pct">{pct < 0.1 ? '<0.1' : pct.toFixed(1)}%</span>
@@ -317,7 +324,8 @@ function DirectoryBrowser({ rootPath }: { rootPath: string }) {
             );
           })}
         </div>
-      )}
+        );
+      })()}
 
       {browseData.directories.length === 0 && browseData.files.length === 0 && (
         <div className="no-suggestions"><p>This directory is empty.</p></div>
