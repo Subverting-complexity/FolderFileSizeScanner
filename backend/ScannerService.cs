@@ -22,6 +22,7 @@ public class ScannerService
     private int _scanning;
     private Dictionary<string, DirStats> _dirMap = new(StringComparer.OrdinalIgnoreCase);
     private Dictionary<string, List<FileEntry>> _dirFiles = new(StringComparer.OrdinalIgnoreCase);
+    private Dictionary<string, List<string>> _childDirs = new(StringComparer.OrdinalIgnoreCase);
     private ScanResult? _lastResult;
     private string? _lastRootPath;
 
@@ -41,6 +42,24 @@ public class ScannerService
         }
     }
 
+    private void BuildChildIndex()
+    {
+        var index = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var dirPath in _dirMap.Keys)
+        {
+            var parent = Path.GetDirectoryName(dirPath);
+            if (parent == null) continue;
+            var normalizedParent = parent.TrimEnd('\\', '/');
+            if (!index.TryGetValue(normalizedParent, out var list))
+            {
+                list = [];
+                index[normalizedParent] = list;
+            }
+            list.Add(dirPath);
+        }
+        _childDirs = index;
+    }
+
     public BrowseResult? Browse(string path)
     {
         var normalized = path.TrimEnd('\\', '/');
@@ -53,18 +72,20 @@ public class ScannerService
         if (_dirFiles.TryGetValue(normalized, out var files))
             childFiles = files;
 
-        foreach (var (dirPath, dirStats) in _dirMap)
+        if (_childDirs.TryGetValue(normalized, out var children))
         {
-            var parent = Path.GetDirectoryName(dirPath);
-            if (parent != null && string.Equals(parent.TrimEnd('\\', '/'), normalized, StringComparison.OrdinalIgnoreCase))
+            foreach (var dirPath in children)
             {
-                childDirs.Add(new DirEntry(
-                    Path.GetFileName(dirPath),
-                    dirPath,
-                    dirStats.TotalSize,
-                    dirStats.TotalFileCount,
-                    dirStats.SubDirCount
-                ));
+                if (_dirMap.TryGetValue(dirPath, out var dirStats))
+                {
+                    childDirs.Add(new DirEntry(
+                        Path.GetFileName(dirPath),
+                        dirPath,
+                        dirStats.TotalSize,
+                        dirStats.TotalFileCount,
+                        dirStats.SubDirCount
+                    ));
+                }
             }
         }
 
@@ -247,6 +268,7 @@ public class ScannerService
         _dirMap = dirMap;
         _dirFiles = dirFiles;
         _lastRootPath = rootPath;
+        BuildChildIndex();
 
         if (accessDeniedCount > MaxAccessDeniedLogs)
             await Log(onLog, "warning", $"Total access-denied entries: {accessDeniedCount} ({accessDeniedCount - MaxAccessDeniedLogs} suppressed from log)");
@@ -370,6 +392,7 @@ public class ScannerService
         _dirFiles = dirFiles;
         _lastResult = cached.Result;
         _lastRootPath = cached.RootPath;
+        BuildChildIndex();
         return true;
     }
 
