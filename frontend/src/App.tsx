@@ -351,7 +351,14 @@ function ScanHistory({ onLoadScan, onClose }: {
     })();
   }, []);
 
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+
   const handleDelete = async (id: string) => {
+    if (confirmDeleteId !== id) {
+      setConfirmDeleteId(id);
+      return;
+    }
+    setConfirmDeleteId(null);
     try {
       await deleteCachedScan(id);
       setScans(prev => prev.filter(s => s.id !== id));
@@ -412,11 +419,12 @@ function ScanHistory({ onLoadScan, onClose }: {
                   {loadingId === scan.id ? 'Loading...' : 'Browse'}
                 </button>
                 <button
-                  className="btn btn-cancel btn-sm"
+                  className={`btn btn-sm ${confirmDeleteId === scan.id ? 'btn-cancel' : 'btn-secondary'}`}
                   onClick={() => handleDelete(scan.id)}
+                  onBlur={() => setConfirmDeleteId(null)}
                   disabled={loadingId !== null}
                 >
-                  Delete
+                  {confirmDeleteId === scan.id ? 'Confirm?' : 'Delete'}
                 </button>
               </div>
             </div>
