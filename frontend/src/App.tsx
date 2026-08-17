@@ -283,7 +283,7 @@ function DirectoryBrowser({ rootPath }: { rootPath: string }) {
         );
       })()}
 
-      {browseData.files.length > 0 && browseData.directories.length === 0 && (() => {
+      {browseData.files.length > 0 && (() => {
         const maxFileSize = Math.max(...browseData.files.map(f => f.size), 1);
         return (
         <div className="browser-list">
