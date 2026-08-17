@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 
 namespace FolderFileSizeScanner;
 
@@ -9,6 +10,7 @@ public class ScannerService
     private const int MaxAccessDeniedLogs = 20;
     private const long LargeFileThreshold = 1L * 1024 * 1024 * 1024; // 1 GB
     private const int MaxCachedScans = 20;
+    private static readonly Regex ValidCacheId = new(@"^[\w\-]+$", RegexOptions.Compiled);
 
     private static readonly int[] FileMilestones = [1000, 10_000, 50_000, 100_000, 250_000, 500_000, 1_000_000];
     private static readonly JsonSerializerOptions CacheJsonOptions = new()
@@ -330,6 +332,7 @@ public class ScannerService
 
     public CachedScanDetail? LoadCachedScan(string id)
     {
+        if (!ValidCacheId.IsMatch(id)) return null;
         try
         {
             var filePath = Path.Combine(CacheDir, $"scan-{id}.json");
@@ -342,6 +345,7 @@ public class ScannerService
 
     public bool LoadCacheForBrowsing(string id)
     {
+        if (!ValidCacheId.IsMatch(id)) return false;
         var cached = LoadCachedScan(id);
         if (cached == null) return false;
 
@@ -371,6 +375,7 @@ public class ScannerService
 
     public bool DeleteCachedScan(string id)
     {
+        if (!ValidCacheId.IsMatch(id)) return false;
         try
         {
             var filePath = Path.Combine(CacheDir, $"scan-{id}.json");
