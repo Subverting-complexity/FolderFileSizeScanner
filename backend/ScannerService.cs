@@ -449,6 +449,8 @@ public class ScannerService
 
     private static void PropagateSubtreeSizes(Dictionary<string, DirStats> dirMap, string root)
     {
+        if (!dirMap.ContainsKey(root)) return;
+
         var children = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
         foreach (var dirPath in dirMap.Keys)
         {
@@ -465,28 +467,34 @@ public class ScannerService
             }
         }
 
-        long Aggregate(string path)
+        var order = new List<string>();
+        var stack = new Stack<string>();
+        stack.Push(root);
+        while (stack.Count > 0)
         {
+            var path = stack.Pop();
+            order.Add(path);
+            if (children.TryGetValue(path, out var kids))
+                foreach (var child in kids)
+                    stack.Push(child);
+        }
+
+        for (var i = order.Count - 1; i >= 0; i--)
+        {
+            var path = order[i];
             var stats = dirMap[path];
-            long subtreeSize = stats.OwnSize;
-            int subtreeFiles = stats.OwnFileCount;
+            stats.TotalSize = stats.OwnSize;
+            stats.TotalFileCount = stats.OwnFileCount;
 
             if (children.TryGetValue(path, out var kids))
             {
                 foreach (var child in kids)
                 {
-                    subtreeSize += Aggregate(child);
-                    subtreeFiles += dirMap[child].TotalFileCount;
+                    stats.TotalSize += dirMap[child].TotalSize;
+                    stats.TotalFileCount += dirMap[child].TotalFileCount;
                 }
             }
-
-            stats.TotalSize = subtreeSize;
-            stats.TotalFileCount = subtreeFiles;
-            return subtreeSize;
         }
-
-        if (dirMap.ContainsKey(root))
-            Aggregate(root);
     }
 
     private static async Task Log(Func<LogEntry, Task> onLog, string level, string message)
