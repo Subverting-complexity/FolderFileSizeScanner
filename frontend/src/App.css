@@ -1045,6 +1045,7 @@ body {
 }
 
 .browser-bar-fill {
+  display: block;
   height: 100%;
   border-radius: 4px;
   transition: width 0.2s ease;
