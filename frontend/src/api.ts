@@ -44,6 +44,8 @@ export function startScan(
     const decoder = new TextDecoder();
     let buffer = '';
 
+    let currentEvent = '';
+
     try {
       while (true) {
         const { done, value } = await reader.read();
@@ -53,7 +55,6 @@ export function startScan(
         const lines = buffer.split('\n');
         buffer = lines.pop() || '';
 
-        let currentEvent = '';
         for (const line of lines) {
           if (line.startsWith('event: ')) {
             currentEvent = line.slice(7).trim();
@@ -89,9 +90,13 @@ export async function fetchCachedScans(): Promise<CachedScan[]> {
   return res.json();
 }
 
-export async function loadCachedScan(id: string): Promise<void> {
-  const res = await fetch(`${API_BASE}/cache/${encodeURIComponent(id)}/load`, { method: 'POST' });
-  if (!res.ok) throw new Error('Failed to load cached scan');
+export async function loadCachedScan(id: string): Promise<ScanResult> {
+  const loadRes = await fetch(`${API_BASE}/cache/${encodeURIComponent(id)}/load`, { method: 'POST' });
+  if (!loadRes.ok) throw new Error('Failed to load cached scan');
+  const detailRes = await fetch(`${API_BASE}/cache/${encodeURIComponent(id)}`);
+  if (!detailRes.ok) throw new Error('Failed to fetch cached scan detail');
+  const detail = await detailRes.json();
+  return detail.result as ScanResult;
 }
 
 export async function deleteCachedScan(id: string): Promise<void> {

@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 
 namespace FolderFileSizeScanner;
 
@@ -9,6 +10,7 @@ public class ScannerService
     private const int MaxAccessDeniedLogs = 20;
     private const long LargeFileThreshold = 1L * 1024 * 1024 * 1024; // 1 GB
     private const int MaxCachedScans = 20;
+    private static readonly Regex ValidCacheId = new(@"^[\w\-]+$", RegexOptions.Compiled);
 
     private static readonly int[] FileMilestones = [1000, 10_000, 50_000, 100_000, 250_000, 500_000, 1_000_000];
     private static readonly JsonSerializerOptions CacheJsonOptions = new()
@@ -20,6 +22,7 @@ public class ScannerService
     private int _scanning;
     private Dictionary<string, DirStats> _dirMap = new(StringComparer.OrdinalIgnoreCase);
     private Dictionary<string, List<FileEntry>> _dirFiles = new(StringComparer.OrdinalIgnoreCase);
+    private Dictionary<string, List<string>> _childDirs = new(StringComparer.OrdinalIgnoreCase);
     private ScanResult? _lastResult;
     private string? _lastRootPath;
 
@@ -39,6 +42,24 @@ public class ScannerService
         }
     }
 
+    private void BuildChildIndex()
+    {
+        var index = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var dirPath in _dirMap.Keys)
+        {
+            var parent = Path.GetDirectoryName(dirPath);
+            if (parent == null) continue;
+            var normalizedParent = parent.TrimEnd('\\', '/');
+            if (!index.TryGetValue(normalizedParent, out var list))
+            {
+                list = [];
+                index[normalizedParent] = list;
+            }
+            list.Add(dirPath);
+        }
+        _childDirs = index;
+    }
+
     public BrowseResult? Browse(string path)
     {
         var normalized = path.TrimEnd('\\', '/');
@@ -51,18 +72,20 @@ public class ScannerService
         if (_dirFiles.TryGetValue(normalized, out var files))
             childFiles = files;
 
-        foreach (var (dirPath, dirStats) in _dirMap)
+        if (_childDirs.TryGetValue(normalized, out var children))
         {
-            var parent = Path.GetDirectoryName(dirPath);
-            if (parent != null && string.Equals(parent.TrimEnd('\\', '/'), normalized, StringComparison.OrdinalIgnoreCase))
+            foreach (var dirPath in children)
             {
-                childDirs.Add(new DirEntry(
-                    Path.GetFileName(dirPath),
-                    dirPath,
-                    dirStats.TotalSize,
-                    dirStats.TotalFileCount,
-                    dirStats.SubDirCount
-                ));
+                if (_dirMap.TryGetValue(dirPath, out var dirStats))
+                {
+                    childDirs.Add(new DirEntry(
+                        Path.GetFileName(dirPath),
+                        dirPath,
+                        dirStats.TotalSize,
+                        dirStats.TotalFileCount,
+                        dirStats.SubDirCount
+                    ));
+                }
             }
         }
 
@@ -245,6 +268,7 @@ public class ScannerService
         _dirMap = dirMap;
         _dirFiles = dirFiles;
         _lastRootPath = rootPath;
+        BuildChildIndex();
 
         if (accessDeniedCount > MaxAccessDeniedLogs)
             await Log(onLog, "warning", $"Total access-denied entries: {accessDeniedCount} ({accessDeniedCount - MaxAccessDeniedLogs} suppressed from log)");
@@ -287,8 +311,9 @@ public class ScannerService
         try
         {
             var id = DateTime.UtcNow.ToString("yyyyMMdd-HHmmss-fff") + "-" + Guid.NewGuid().ToString("N")[..4];
+            var scannedAt = DateTime.UtcNow;
             var detail = new CachedScanDetail(
-                id, rootPath, DateTime.UtcNow, result,
+                id, rootPath, scannedAt, result,
                 dirMap.ToDictionary(
                     kv => kv.Key,
                     kv => new DirStatsDto(kv.Value.OwnSize, kv.Value.OwnFileCount,
@@ -297,6 +322,12 @@ public class ScannerService
             var json = JsonSerializer.Serialize(detail, CacheJsonOptions);
             var filePath = Path.Combine(CacheDir, $"scan-{id}.json");
             File.WriteAllText(filePath, json);
+
+            var meta = new CachedScan(id, rootPath, scannedAt,
+                result.TotalFiles, result.TotalDirs, result.TotalSize, result.ElapsedSeconds);
+            var metaJson = JsonSerializer.Serialize(meta, CacheJsonOptions);
+            File.WriteAllText(Path.Combine(CacheDir, $"meta-{id}.json"), metaJson);
+
             PruneCacheFiles();
         }
         catch { }
@@ -312,6 +343,15 @@ public class ScannerService
             {
                 try
                 {
+                    var scanFileName = Path.GetFileName(file);
+                    var metaFile = Path.Combine(CacheDir, "meta-" + scanFileName[5..]);
+                    if (File.Exists(metaFile))
+                    {
+                        var metaJson = File.ReadAllText(metaFile);
+                        var meta = JsonSerializer.Deserialize<CachedScan>(metaJson, CacheJsonOptions);
+                        if (meta != null) { results.Add(meta); continue; }
+                    }
+
                     using var stream = File.OpenRead(file);
                     var detail = JsonSerializer.Deserialize<CachedScanDetail>(stream, CacheJsonOptions);
                     if (detail != null)
@@ -330,6 +370,7 @@ public class ScannerService
 
     public CachedScanDetail? LoadCachedScan(string id)
     {
+        if (!ValidCacheId.IsMatch(id)) return null;
         try
         {
             var filePath = Path.Combine(CacheDir, $"scan-{id}.json");
@@ -342,6 +383,7 @@ public class ScannerService
 
     public bool LoadCacheForBrowsing(string id)
     {
+        if (!ValidCacheId.IsMatch(id)) return false;
         var cached = LoadCachedScan(id);
         if (cached == null) return false;
 
@@ -366,17 +408,20 @@ public class ScannerService
         _dirFiles = dirFiles;
         _lastResult = cached.Result;
         _lastRootPath = cached.RootPath;
+        BuildChildIndex();
         return true;
     }
 
     public bool DeleteCachedScan(string id)
     {
+        if (!ValidCacheId.IsMatch(id)) return false;
         try
         {
             var filePath = Path.Combine(CacheDir, $"scan-{id}.json");
             if (File.Exists(filePath))
             {
                 File.Delete(filePath);
+                try { File.Delete(Path.Combine(CacheDir, $"meta-{id}.json")); } catch { }
                 return true;
             }
         }
@@ -393,13 +438,19 @@ public class ScannerService
                 .Skip(MaxCachedScans)
                 .ToList();
             foreach (var file in files)
+            {
                 try { File.Delete(file); } catch { }
+                var metaFile = Path.Combine(CacheDir, "meta-" + Path.GetFileName(file)[5..]);
+                try { File.Delete(metaFile); } catch { }
+            }
         }
         catch { }
     }
 
     private static void PropagateSubtreeSizes(Dictionary<string, DirStats> dirMap, string root)
     {
+        if (!dirMap.ContainsKey(root)) return;
+
         var children = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
         foreach (var dirPath in dirMap.Keys)
         {
@@ -416,28 +467,34 @@ public class ScannerService
             }
         }
 
-        long Aggregate(string path)
+        var order = new List<string>();
+        var stack = new Stack<string>();
+        stack.Push(root);
+        while (stack.Count > 0)
         {
+            var path = stack.Pop();
+            order.Add(path);
+            if (children.TryGetValue(path, out var kids))
+                foreach (var child in kids)
+                    stack.Push(child);
+        }
+
+        for (var i = order.Count - 1; i >= 0; i--)
+        {
+            var path = order[i];
             var stats = dirMap[path];
-            long subtreeSize = stats.OwnSize;
-            int subtreeFiles = stats.OwnFileCount;
+            stats.TotalSize = stats.OwnSize;
+            stats.TotalFileCount = stats.OwnFileCount;
 
             if (children.TryGetValue(path, out var kids))
             {
                 foreach (var child in kids)
                 {
-                    subtreeSize += Aggregate(child);
-                    subtreeFiles += dirMap[child].TotalFileCount;
+                    stats.TotalSize += dirMap[child].TotalSize;
+                    stats.TotalFileCount += dirMap[child].TotalFileCount;
                 }
             }
-
-            stats.TotalSize = subtreeSize;
-            stats.TotalFileCount = subtreeFiles;
-            return subtreeSize;
         }
-
-        if (dirMap.ContainsKey(root))
-            Aggregate(root);
     }
 
     private static async Task Log(Func<LogEntry, Task> onLog, string level, string message)

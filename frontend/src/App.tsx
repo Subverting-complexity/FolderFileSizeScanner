@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import type { DriveInfo, ScanProgress, ScanResult, LogEntry, BrowseResult, CachedScan } from './types';
 import { fetchDrives, startScan, browse, fetchCachedScans, loadCachedScan, deleteCachedScan } from './api';
 import { formatSize, formatDate, formatElapsed, truncatePath, barColor, buildBreadcrumbs } from './utils';
@@ -89,9 +89,15 @@ function LogFilteredView({ logs, full, autoScroll, emptyText }: {
     }
   }, [logs.length, autoScroll]);
 
-  const infoCount = logs.filter(l => l.level === 'info').length;
-  const warningCount = logs.filter(l => l.level === 'warning').length;
-  const errorCount = logs.filter(l => l.level === 'error').length;
+  const { infoCount, warningCount, errorCount } = useMemo(() => {
+    let info = 0, warning = 0, error = 0;
+    for (const l of logs) {
+      if (l.level === 'info') info++;
+      else if (l.level === 'warning') warning++;
+      else if (l.level === 'error') error++;
+    }
+    return { infoCount: info, warningCount: warning, errorCount: error };
+  }, [logs]);
   const filtered = filter === 'all' ? logs : logs.filter(l => l.level === filter);
 
   return (
@@ -283,7 +289,7 @@ function DirectoryBrowser({ rootPath }: { rootPath: string }) {
         );
       })()}
 
-      {browseData.files.length > 0 && browseData.directories.length === 0 && (() => {
+      {browseData.files.length > 0 && (() => {
         const maxFileSize = Math.max(...browseData.files.map(f => f.size), 1);
         return (
         <div className="browser-list">
@@ -335,35 +341,51 @@ function DirectoryBrowser({ rootPath }: { rootPath: string }) {
 }
 
 function ScanHistory({ onLoadScan, onClose }: {
-  onLoadScan: (id: string, rootPath: string) => void;
+  onLoadScan: (id: string, rootPath: string, result?: ScanResult) => void;
   onClose: () => void;
 }) {
   const [scans, setScans] = useState<CachedScan[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadingId, setLoadingId] = useState<string | null>(null);
+  const [historyError, setHistoryError] = useState<string | null>(null);
 
   useEffect(() => {
     (async () => {
       try {
         setScans(await fetchCachedScans());
-      } catch { /* ignore */ }
+      } catch {
+        setHistoryError('Failed to load scan history.');
+      }
       setLoading(false);
     })();
   }, []);
 
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+
   const handleDelete = async (id: string) => {
+    if (confirmDeleteId !== id) {
+      setConfirmDeleteId(id);
+      return;
+    }
+    setConfirmDeleteId(null);
+    setHistoryError(null);
     try {
       await deleteCachedScan(id);
       setScans(prev => prev.filter(s => s.id !== id));
-    } catch { /* ignore */ }
+    } catch {
+      setHistoryError('Failed to delete scan.');
+    }
   };
 
   const handleLoad = async (scan: CachedScan) => {
     setLoadingId(scan.id);
+    setHistoryError(null);
     try {
-      await loadCachedScan(scan.id);
-      onLoadScan(scan.id, scan.rootPath);
-    } catch { /* ignore */ }
+      const cachedResult = await loadCachedScan(scan.id);
+      onLoadScan(scan.id, scan.rootPath, cachedResult);
+    } catch {
+      setHistoryError('Failed to load scan.');
+    }
     setLoadingId(null);
   };
 
@@ -385,7 +407,8 @@ function ScanHistory({ onLoadScan, onClose }: {
         <h3>Scan History</h3>
         <button className="btn btn-cancel btn-sm" onClick={onClose}>Close</button>
       </div>
-      {scans.length === 0 ? (
+      {historyError && <div className="error-banner">{historyError}</div>}
+      {scans.length === 0 && !historyError ? (
         <div className="no-suggestions"><p>No cached scans found. Run a scan first.</p></div>
       ) : (
         <div className="history-list">
@@ -412,11 +435,12 @@ function ScanHistory({ onLoadScan, onClose }: {
                   {loadingId === scan.id ? 'Loading...' : 'Browse'}
                 </button>
                 <button
-                  className="btn btn-cancel btn-sm"
+                  className={`btn btn-sm ${confirmDeleteId === scan.id ? 'btn-cancel' : 'btn-secondary'}`}
                   onClick={() => handleDelete(scan.id)}
+                  onBlur={() => setConfirmDeleteId(null)}
                   disabled={loadingId !== null}
                 >
-                  Delete
+                  {confirmDeleteId === scan.id ? 'Confirm?' : 'Delete'}
                 </button>
               </div>
             </div>
@@ -519,10 +543,10 @@ export default function App() {
     }
   }, [customPath, handleStartScan]);
 
-  const handleLoadCachedScan = useCallback((_id: string, rootPath: string) => {
+  const handleLoadCachedScan = useCallback((id: string, rootPath: string, cachedResult?: ScanResult) => {
     setSelectedDrive(rootPath);
-    setResult({ totalFiles: 0, totalDirs: 0, totalSize: 0, elapsedSeconds: 0, scanSpeedGBPerSec: null, largestFiles: [], suggestions: [] });
-    setActiveTab('browse');
+    setResult(cachedResult ?? { totalFiles: 0, totalDirs: 0, totalSize: 0, elapsedSeconds: 0, scanSpeedGBPerSec: null, largestFiles: [], suggestions: [] });
+    setActiveTab(cachedResult && cachedResult.largestFiles.length > 0 ? 'largest' : 'browse');
     setShowHistory(false);
     setLogs([]);
   }, []);
@@ -550,7 +574,7 @@ export default function App() {
           <button className="btn btn-primary" onClick={handleCustomScan} disabled={!customPath.trim()}>
             Scan Folder
           </button>
-          <button className="btn btn-cancel" onClick={() => setShowHistory(!showHistory)}>
+          <button className="btn btn-secondary" onClick={() => setShowHistory(!showHistory)}>
             History
           </button>
         </div>
@@ -691,7 +715,12 @@ export default function App() {
     const filteredLargest = fileSearch
       ? sortedLargest.filter(f => f.path.toLowerCase().includes(fileSearch.toLowerCase()) || (f.extension || '').toLowerCase().includes(fileSearch.toLowerCase()))
       : sortedLargest;
-    const maxFileSize = result.largestFiles.length > 0 ? result.largestFiles[0].size : 1;
+    const originalRanks = new Map(
+      [...result.largestFiles].sort((a, b) => b.size - a.size).map((f, i) => [f.path, i + 1])
+    );
+    const maxFileSize = result.largestFiles.length > 0
+      ? Math.max(...result.largestFiles.map(f => f.size))
+      : 1;
     return (
       <div className="app">
         <header className="header">
@@ -800,11 +829,11 @@ export default function App() {
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredLargest.slice(0, 100).map((file, i) => {
+                  {filteredLargest.slice(0, 100).map((file) => {
                     const filePct = (file.size / maxFileSize) * 100;
                     return (
                       <tr key={file.path}>
-                        <td className="col-rank">{i + 1}</td>
+                        <td className="col-rank">{originalRanks.get(file.path) ?? '--'}</td>
                         <td className="col-path" title={file.path}>{file.path}</td>
                         <td className="col-bar-cell">
                           <div className="file-size-bar">
@@ -865,6 +894,11 @@ export default function App() {
         )}
 
         <div className="results-actions">
+          {selectedDrive && (
+            <button className="btn btn-secondary" onClick={() => handleStartScan(selectedDrive)}>
+              Re-scan {selectedDrive}
+            </button>
+          )}
           <button className="btn btn-primary" onClick={handleReset}>
             Scan Another Drive
           </button>
