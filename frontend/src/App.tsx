@@ -691,7 +691,12 @@ export default function App() {
     const filteredLargest = fileSearch
       ? sortedLargest.filter(f => f.path.toLowerCase().includes(fileSearch.toLowerCase()) || (f.extension || '').toLowerCase().includes(fileSearch.toLowerCase()))
       : sortedLargest;
-    const maxFileSize = result.largestFiles.length > 0 ? result.largestFiles[0].size : 1;
+    const originalRanks = new Map(
+      [...result.largestFiles].sort((a, b) => b.size - a.size).map((f, i) => [f.path, i + 1])
+    );
+    const maxFileSize = result.largestFiles.length > 0
+      ? Math.max(...result.largestFiles.map(f => f.size))
+      : 1;
     return (
       <div className="app">
         <header className="header">
@@ -800,11 +805,11 @@ export default function App() {
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredLargest.slice(0, 100).map((file, i) => {
+                  {filteredLargest.slice(0, 100).map((file) => {
                     const filePct = (file.size / maxFileSize) * 100;
                     return (
                       <tr key={file.path}>
-                        <td className="col-rank">{i + 1}</td>
+                        <td className="col-rank">{originalRanks.get(file.path) ?? '--'}</td>
                         <td className="col-path" title={file.path}>{file.path}</td>
                         <td className="col-bar-cell">
                           <div className="file-size-bar">
