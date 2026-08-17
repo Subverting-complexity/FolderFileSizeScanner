@@ -550,7 +550,7 @@ export default function App() {
           <button className="btn btn-primary" onClick={handleCustomScan} disabled={!customPath.trim()}>
             Scan Folder
           </button>
-          <button className="btn btn-cancel" onClick={() => setShowHistory(!showHistory)}>
+          <button className="btn btn-secondary" onClick={() => setShowHistory(!showHistory)}>
             History
           </button>
         </div>
