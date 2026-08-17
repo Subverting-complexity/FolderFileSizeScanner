@@ -347,12 +347,15 @@ function ScanHistory({ onLoadScan, onClose }: {
   const [scans, setScans] = useState<CachedScan[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadingId, setLoadingId] = useState<string | null>(null);
+  const [historyError, setHistoryError] = useState<string | null>(null);
 
   useEffect(() => {
     (async () => {
       try {
         setScans(await fetchCachedScans());
-      } catch { /* ignore */ }
+      } catch {
+        setHistoryError('Failed to load scan history.');
+      }
       setLoading(false);
     })();
   }, []);
@@ -365,18 +368,24 @@ function ScanHistory({ onLoadScan, onClose }: {
       return;
     }
     setConfirmDeleteId(null);
+    setHistoryError(null);
     try {
       await deleteCachedScan(id);
       setScans(prev => prev.filter(s => s.id !== id));
-    } catch { /* ignore */ }
+    } catch {
+      setHistoryError('Failed to delete scan.');
+    }
   };
 
   const handleLoad = async (scan: CachedScan) => {
     setLoadingId(scan.id);
+    setHistoryError(null);
     try {
       const cachedResult = await loadCachedScan(scan.id);
       onLoadScan(scan.id, scan.rootPath, cachedResult);
-    } catch { /* ignore */ }
+    } catch {
+      setHistoryError('Failed to load scan.');
+    }
     setLoadingId(null);
   };
 
@@ -398,7 +407,8 @@ function ScanHistory({ onLoadScan, onClose }: {
         <h3>Scan History</h3>
         <button className="btn btn-cancel btn-sm" onClick={onClose}>Close</button>
       </div>
-      {scans.length === 0 ? (
+      {historyError && <div className="error-banner">{historyError}</div>}
+      {scans.length === 0 && !historyError ? (
         <div className="no-suggestions"><p>No cached scans found. Run a scan first.</p></div>
       ) : (
         <div className="history-list">
