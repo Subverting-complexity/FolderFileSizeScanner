@@ -878,6 +878,11 @@ export default function App() {
         )}
 
         <div className="results-actions">
+          {selectedDrive && (
+            <button className="btn btn-secondary" onClick={() => handleStartScan(selectedDrive)}>
+              Re-scan {selectedDrive}
+            </button>
+          )}
           <button className="btn btn-primary" onClick={handleReset}>
             Scan Another Drive
           </button>
