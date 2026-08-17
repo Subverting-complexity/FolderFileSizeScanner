@@ -335,7 +335,7 @@ function DirectoryBrowser({ rootPath }: { rootPath: string }) {
 }
 
 function ScanHistory({ onLoadScan, onClose }: {
-  onLoadScan: (id: string, rootPath: string) => void;
+  onLoadScan: (id: string, rootPath: string, result?: ScanResult) => void;
   onClose: () => void;
 }) {
   const [scans, setScans] = useState<CachedScan[]>([]);
@@ -361,8 +361,8 @@ function ScanHistory({ onLoadScan, onClose }: {
   const handleLoad = async (scan: CachedScan) => {
     setLoadingId(scan.id);
     try {
-      await loadCachedScan(scan.id);
-      onLoadScan(scan.id, scan.rootPath);
+      const cachedResult = await loadCachedScan(scan.id);
+      onLoadScan(scan.id, scan.rootPath, cachedResult);
     } catch { /* ignore */ }
     setLoadingId(null);
   };
@@ -519,10 +519,10 @@ export default function App() {
     }
   }, [customPath, handleStartScan]);
 
-  const handleLoadCachedScan = useCallback((_id: string, rootPath: string) => {
+  const handleLoadCachedScan = useCallback((id: string, rootPath: string, cachedResult?: ScanResult) => {
     setSelectedDrive(rootPath);
-    setResult({ totalFiles: 0, totalDirs: 0, totalSize: 0, elapsedSeconds: 0, scanSpeedGBPerSec: null, largestFiles: [], suggestions: [] });
-    setActiveTab('browse');
+    setResult(cachedResult ?? { totalFiles: 0, totalDirs: 0, totalSize: 0, elapsedSeconds: 0, scanSpeedGBPerSec: null, largestFiles: [], suggestions: [] });
+    setActiveTab(cachedResult && cachedResult.largestFiles.length > 0 ? 'largest' : 'browse');
     setShowHistory(false);
     setLogs([]);
   }, []);

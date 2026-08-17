@@ -89,9 +89,13 @@ export async function fetchCachedScans(): Promise<CachedScan[]> {
   return res.json();
 }
 
-export async function loadCachedScan(id: string): Promise<void> {
-  const res = await fetch(`${API_BASE}/cache/${encodeURIComponent(id)}/load`, { method: 'POST' });
-  if (!res.ok) throw new Error('Failed to load cached scan');
+export async function loadCachedScan(id: string): Promise<ScanResult> {
+  const loadRes = await fetch(`${API_BASE}/cache/${encodeURIComponent(id)}/load`, { method: 'POST' });
+  if (!loadRes.ok) throw new Error('Failed to load cached scan');
+  const detailRes = await fetch(`${API_BASE}/cache/${encodeURIComponent(id)}`);
+  if (!detailRes.ok) throw new Error('Failed to fetch cached scan detail');
+  const detail = await detailRes.json();
+  return detail.result as ScanResult;
 }
 
 export async function deleteCachedScan(id: string): Promise<void> {
